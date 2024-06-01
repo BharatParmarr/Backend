@@ -115,7 +115,7 @@ class Item(models.Model):
     name = models.CharField(max_length=200)
     description = models.TextField()
     price = models.FloatField()
-    image = models.ImageField(upload_to='item_image/')
+    image = models.ImageField(upload_to='item_image/', null=True, blank=True)
 
     def __str__(self):
         return self.name
@@ -126,6 +126,7 @@ class Order(models.Model):
     status = models.BooleanField(default=False)
     order_time = models.DateTimeField(auto_now_add=True)
     order_number = models.IntegerField()
+    completed_time = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.table.name
@@ -138,6 +139,8 @@ class OrderDetail(models.Model):
     price = models.FloatField()
     total = models.FloatField()
     is_completed = models.BooleanField(default=False)
+    created_time = models.DateTimeField(auto_now_add=True)
+    completed_time = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.item.name

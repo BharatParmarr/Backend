@@ -21,6 +21,9 @@ class CategorySerializer(serializers.ModelSerializer):
 
 
 class ItemSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
     class Meta:
         model = Item
         fields = '__all__'
@@ -37,11 +40,13 @@ class OrderDetailSerializer(serializers.ModelSerializer):
 
 class OrderSerializer(serializers.ModelSerializer):
     order_details = OrderDetailSerializer(source='orderdetail_set', many=True)
+    table_name = serializers.CharField(source='table.name', read_only=True)
+    table_id = serializers.IntegerField(source='table.id', read_only=True)
 
     class Meta:
         model = Order
         fields = ['table', 'status', 'order_time',
-                  'order_number', 'order_details', 'id']
+                  'order_number', 'order_details', 'id', 'table_name', 'table_id']
 
     def create(self, validated_data):
         order_details_data = validated_data.pop('order_details')

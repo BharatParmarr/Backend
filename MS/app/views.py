@@ -20,8 +20,14 @@ from rest_framework.permissions import IsAuthenticated
 # models for order
 from django.db import transaction
 from django.core.exceptions import ObjectDoesNotExist
-
+# changel websocket
+from channels.layers import get_channel_layer
+from asgiref.sync import async_to_sync
 # Create your views here.
+# data anlyses
+from django.db.models import Count, Sum, Avg
+from django.db.models import F, ExpressionWrapper, fields
+from django.db.models.functions import Cast
 
 
 def Home(request):
@@ -314,11 +320,11 @@ class OrderDetailViewSet(viewsets.ModelViewSet):
 class OrderCreateView(APIView):
     def post(self, request, format=None):
         data = request.data
-        print(data)
+        if not data['items']:
+            return Response({'error': 'No items in order'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             with transaction.atomic():
                 table = Table.objects.get(id=data['table'])
-                # find current active order in the order table
                 order_number = Order.objects.filter(
                     table=table, status=False).count()
                 order = Order.objects.create(
@@ -334,12 +340,52 @@ class OrderCreateView(APIView):
                         total=item.price * item_data['quantity']
                     )
 
-            return Response({'status': 'success'}, status=status.HTTP_201_CREATED)
+                # Send message to WebSocket group
+                channel_layer = get_channel_layer()
+                async_to_sync(channel_layer.group_send)(
+                    'orders_group',
+                    {
+                        'type': 'order_update',
+                        'message': 'New order created'
+                    }
+                )
 
+            return Response({'status': 'success'}, status=status.HTTP_201_CREATED)
         except ObjectDoesNotExist as e:
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+# class OrderCreateView(APIView):
+#     def post(self, request, format=None):
+#         data = request.data
+#         # if there are no items then return
+#         if not data['items']:
+#             return Response({'error': 'No items in order'}, status=status.HTTP_400_BAD_REQUEST)
+#         try:
+#             with transaction.atomic():
+#                 table = Table.objects.get(id=data['table'])
+#                 # find current active order in the order table
+#                 order_number = Order.objects.filter(
+#                     table=table, status=False).count()
+#                 order = Order.objects.create(
+#                     table=table, order_number=order_number + 1)
+
+#                 for item_data in data['items']:
+#                     item = Item.objects.get(id=item_data['item'])
+#                     OrderDetail.objects.create(
+#                         order=order,
+#                         item=item,
+#                         quantity=item_data['quantity'],
+#                         price=item.price,
+#                         total=item.price * item_data['quantity']
+#                     )
+
+#             return Response({'status': 'success'}, status=status.HTTP_201_CREATED)
+#         except ObjectDoesNotExist as e:
+#             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+#         except Exception as e:
+#             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
 # change is_completed of order detail to True
@@ -398,3 +444,48 @@ class Record_payment(APIView):
             return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
         except Exception as e:
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
+
+class DataAnalysis(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                items_sold = OrderDetail.objects.filter(
+                    order__table__restorant=restorant).aggregate(total=Sum('quantity'))['total']
+
+                # How much money has each item made
+                item_revenue = OrderDetail.objects.filter(order__table__restorant=restorant).values(
+                    'item__name').annotate(revenue=Sum('total'))
+
+                # Which category has received the highest amount of orders and money
+                category_data = OrderDetail.objects.filter(order__table__restorant=restorant).values('item__category__name').annotate(
+                    total_orders=Sum('quantity'), total_revenue=Sum('total')).order_by('-total_orders', '-total_revenue')
+
+                # Convert 'created_time' to Unix timestamp (seconds since 1970-01-01)
+                item_creation_time = OrderDetail.objects.filter(order__table__restorant=restorant).annotate(
+                    created_time_unix=Cast(ExpressionWrapper(
+                        F('created_time'), output_field=fields.DateTimeField()), output_field=fields.FloatField())
+                ).values('item__name').annotate(avg_creation_time=Avg('created_time_unix'))
+
+                # Convert 'completed_time' to Unix timestamp
+                avg_order_completion_time = Order.objects.filter(
+                    table__restorant=restorant).annotate(
+                    completed_time_unix=Cast(ExpressionWrapper(
+                        F('completed_time'), output_field=fields.DateTimeField()), output_field=fields.FloatField())
+                ).aggregate(avg_completion_time=Avg('completed_time_unix'))
+
+                data = {
+                    'items_sold': items_sold,
+                    'item_revenue': list(item_revenue),
+                    'category_data': list(category_data),
+                    'item_creation_time': list(item_creation_time),
+                    'avg_order_completion_time': avg_order_completion_time,
+                }
+                return Response(data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
