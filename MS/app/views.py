@@ -417,6 +417,40 @@ class OrderCompleteView(APIView):
             return Response({'error': str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
 
+class ModifyOrder(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request, pk, format=None):
+        if not request.user.is_authenticated:
+            return Response({'error': 'User not authenticated'}, status=status.HTTP_401_UNAUTHORIZED)
+        # request.user is not None and request.user not in ['manager_restorant', 'staffs'] of Restorant.objects.get(id=OrderDetail.objects.get(id=order_detail_pk).order.table.restorant):
+        restaurant = Restorant.objects.get(id=OrderDetail.objects.get(
+            id=pk).order.table.restorant.id)
+        user = request.user
+
+        if not restaurant.staffs.filter(id=user.id).exists() and \
+                restaurant.created_by != user and \
+                restaurant.manager_restorant != user:
+            return Response({'error': 'User not authorized'}, status=status.HTTP_403_FORBIDDEN)
+        try:
+            order_detail = OrderDetail.objects.filter(order=pk)
+            for item in order_detail:
+                item.delete()
+            data = request.data
+            for item_data in data['items']:
+                item = Item.objects.get(id=item_data['item'])
+                OrderDetail.objects.create(
+                    order=Order.objects.get(id=pk),
+                    item=item,
+                    quantity=item_data['quantity'],
+                    price=item.price,
+                    total=item.price * item_data['quantity']
+                )
+            return Response({'status': 'success'}, status=status.HTTP_200_OK)
+        except ObjectDoesNotExist as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 # record payment of order
 class Record_payment(APIView):
     authentication_classes = [TokenAuthentication]
@@ -488,4 +522,26 @@ class DataAnalysis(APIView):
                     'avg_order_completion_time': avg_order_completion_time,
                 }
                 return Response(data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class OrderHistory(APIView):
+    authentication_classes = [TokenAuthentication]
+    permission_classes = [IsAuthenticated]
+
+    def get(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            page = request.query_params.get('page')
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                orders = Order.objects.filter(
+                    table__restorant=restorant, status=True).order_by('-order_time')
+                if page:
+                    orders = orders[int(page) * 10 - 10:int(page) * 10]
+                else:
+                    orders = orders[:10]
+                serializer = OrderSerializer(orders, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
         return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)

@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import LoginView, OrderCompleteView, OrderCreateView, Record_payment, RestorantViewSet, SignupView, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, Userdata, VerifyOTPView, DataAnalysis
+from .views import LoginView, ModifyOrder, OrderCompleteView, OrderCreateView, OrderHistory, Record_payment, RestorantViewSet, SignupView, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, Userdata, VerifyOTPView, DataAnalysis
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -25,6 +25,8 @@ urlpatterns = [
     path('order_complete/record_payment/<int:order_pk>/',
          Record_payment.as_view(), name='order-complete'),
     path('api/Analysis', DataAnalysis.as_view(), name='Analysis'),
+    path('ModifyOrder/<int:pk>/', ModifyOrder.as_view(), name='ModifyOrder'),
+    path('api/orderHistory', OrderHistory.as_view(), name='orderHistory'),
 ]
 
 if settings.DEBUG:
