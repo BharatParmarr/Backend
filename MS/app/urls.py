@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import LoginView, ModifyOrder, OrderCompleteView, OrderCreateView, OrderHistory, Record_payment, RestorantViewSet, SignupView, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, Userdata, VerifyOTPView, DataAnalysis
+from .views import HostelViewSet, InventoryViewSet, LoginView, ModifyOrder, OrderCompleteView, OrderCreateView, OrderHistory, ProductViewSet, ProductquantityViewSet, Record_payment, RestorantViewSet, RoomViewSet, SignupView, StudentViewSet, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, Userdata, VerifyOTPView, DataAnalysis
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -27,6 +27,13 @@ urlpatterns = [
     path('api/Analysis', DataAnalysis.as_view(), name='Analysis'),
     path('ModifyOrder/<int:pk>/', ModifyOrder.as_view(), name='ModifyOrder'),
     path('api/orderHistory', OrderHistory.as_view(), name='orderHistory'),
+    path('api/product', ProductViewSet.as_view(), name='product'),
+    path('api/product/<int:pk>', ProductquantityViewSet.as_view(), name='product'),
+    path('api/Inventory', InventoryViewSet.as_view(), name='Inventory'),
+    path('api/hostel/hostels/', HostelViewSet.as_view(), name='hostel'),
+    path('api/hostels', RoomViewSet.as_view(), name='room'),
+    path('api/hostel/rooms', RoomViewSet.as_view(), name='room'),
+    path('api/hostel/students', StudentViewSet.as_view(), name='student'),
 ]
 
 if settings.DEBUG:

@@ -1,8 +1,8 @@
 from django.shortcuts import render
 from rest_framework import viewsets
 from django.db.models import Q
-from .models import Profile, Restorant, Table, Category, Item, Order, OrderDetail
-from .serializers import RestorantSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer
+from .models import Hostel, Inventory, Product, Profile, Restorant, Room, Student, Table, Category, Item, Order, OrderDetail
+from .serializers import HostelSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, StudentSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer
 
 # user
 from django.contrib.auth import get_user_model
@@ -537,7 +537,7 @@ class OrderHistory(APIView):
             restorant = Restorant.objects.get(id=restorant_id)
             if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
                 orders = Order.objects.filter(
-                    table__restorant=restorant, status=True).order_by('-order_time')
+                    table__restorant=restorant, status=True).order_by('-completed_time')
                 if page:
                     orders = orders[int(page) * 10 - 10:int(page) * 10]
                 else:
@@ -545,3 +545,216 @@ class OrderHistory(APIView):
                 serializer = OrderSerializer(orders, many=True)
                 return Response(serializer.data, status=status.HTTP_200_OK)
         return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ProductViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                products = Product.objects.filter(restorant=restorant_id)
+                serializer = ProductSerializer(products, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user:
+                data = request.data
+                serializer = ProductSerializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+        return Response({"error": "You are not authorized to add product"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        product = Product.objects.get(id=data['product_id'])
+        restorant = product.restorant
+        if restorant.created_by == request.user:
+            product.delete()
+            return Response({"message": "Product deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this product"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ProductquantityViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request, pk):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user:
+                product = Product.objects.get(id=pk)
+                data = request.data
+                product.quantity = data['quantity']
+                product.save()
+                return Response({"status": "success"}, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to update product quantity"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class InventoryViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                products = Inventory.objects.filter(
+                    restorant=restorant_id).values('product__name').annotate(total_quantity=Sum('quantity'))
+                return Response(list(products), status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                data = request.data
+                product = Product.objects.get(id=data['product'])
+                Inventory.objects.update_or_create(
+                    restorant=restorant,
+                    product=product,
+                    defaults={'quantity': data['quantity']}
+                )
+                return Response({"status": "success"}, status=status.HTTP_201_CREATED)
+        return Response({"error": "You are not authorized to add inventory"}, status=status.HTTP_403_FORBIDDEN)
+
+
+# hostel views ==================================================
+
+# class HostelViewSet(viewsets.ModelViewSet):
+#     authentication_classes = [TokenAuthentication]
+#     queryset = Hostel.objects.all()
+#     serializer_class = HostelSerializer
+
+#     def perform_create(self, serializer):
+#         serializer.save(created_by=self.request.user)
+#         return super().perform_create(serializer)
+class HostelViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostels = Hostel.objects.filter(created_by=user)
+        serializer = HostelSerializer(hostels, many=True)
+        return Response(serializer.data)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        data['created_by'] = user.id
+        serializer = HostelSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        hostel = Hostel.objects.get(id=data['hostel_id'])
+        if hostel.created_by == request.user:
+            hostel.delete()
+            return Response({"message": "Hostel deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this hostel"}, status=status.HTTP_403_FORBIDDEN)
+
+# class RoomViewSet(viewsets.ModelViewSet):
+#     authentication_classes = [TokenAuthentication]
+#     queryset = Room.objects.all()
+#     serializer_class = RoomSerializer
+
+
+class RoomViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostel_id = request.query_params.get('hostel_id')
+        if hostel_id:
+            hostel = Hostel.objects.get(id=hostel_id)
+            if hostel.created_by == user:
+                rooms = Room.objects.filter(hostel=hostel_id)
+                serializer = RoomSerializer(rooms, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        hostel = Hostel.objects.get(id=data['hostel'])
+        if hostel.created_by == user:
+            serializer = RoomSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to create room for this hostel"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        room = Room.objects.get(id=data['room_id'])
+        hostel = room.hostel
+        if hostel.created_by == request.user:
+            room.delete()
+            return Response({"message": "Room deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this room"}, status=status.HTTP_403_FORBIDDEN)
+
+# class StudentViewSet(viewsets.ModelViewSet):
+#     authentication_classes = [TokenAuthentication]
+#     queryset = Student.objects.all()
+#     serializer_class = StudentSerializer
+
+
+class StudentViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostel_id = request.query_params.get('hostel_id')
+        if hostel_id:
+            hostel = Hostel.objects.get(id=hostel_id)
+            if hostel.created_by == user:
+                students = Student.objects.filter(hostel=hostel_id)
+                serializer = StudentSerializer(students, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        print(data)
+        hostel = Hostel.objects.get(id=data['hostel'])
+        if User.objects.get(username=data['user']):
+            data['user'] = User.objects.get(username=data['user']).id
+        else:
+            return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
+        if hostel.created_by == user:
+            serializer = StudentSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to create student for this hostel"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        student = Student.objects.get(id=data['student_id'])
+        hostel = student.hostel
+        if hostel.created_by == request.user:
+            student.delete()
+            return Response({"message": "Student deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this student"}, status=status.HTTP_403_FORBIDDEN)

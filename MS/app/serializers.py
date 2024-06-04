@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Restorant, Table, Category, Item, Order, OrderDetail
+from .models import Product, Restorant, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student
 
 
 class RestorantSerializer(serializers.ModelSerializer):
@@ -54,3 +54,39 @@ class OrderSerializer(serializers.ModelSerializer):
         for order_detail_data in order_details_data:
             OrderDetail.objects.create(order=order, **order_detail_data)
         return order
+
+
+class ProductSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = Product
+        fields = '__all__'
+
+# hostel serializers ===========
+
+
+class HostelSerializer(serializers.ModelSerializer):
+    logo = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = Hostel
+        fields = '__all__'
+
+
+class RoomSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Room
+        fields = '__all__'
+
+
+class StudentSerializer(serializers.ModelSerializer):
+    username = serializers.CharField(source='user.username', read_only=True)
+    image = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = Student
+        fields = ['user', 'room', 'username', 'id', 'roll', 'image']

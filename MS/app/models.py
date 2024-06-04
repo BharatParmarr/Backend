@@ -144,3 +144,205 @@ class OrderDetail(models.Model):
 
     def __str__(self):
         return self.item.name
+
+
+# class Payment(models.Model):
+#     order = models.ForeignKey(Order, on_delete=models.CASCADE)
+#     total = models.FloatField()
+#     payment_method = models.CharField(max_length=200)
+#     paid = models.FloatField()
+#     due = models.FloatField()
+#     created_time = models.DateTimeField(auto_now_add=True)
+#     completed_time = models.DateTimeField(auto_now=True)
+
+#     def __str__(self):
+#         return self.order.table.name'
+def product_image_name(instance, filename):
+    extension = os.path.splitext(filename)[1]  # Get the file extension
+    random_string = str(uuid.uuid4())
+    return 'product_image/' + random_string + extension
+
+
+class Product(models.Model):
+    restorant = models.ForeignKey(Restorant, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    price = models.FloatField()
+    description = models.TextField(null=True, blank=True)
+    quantity = models.IntegerField(default=0)
+    image = models.ImageField(
+        upload_to=product_image_name, null=True, blank=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Inventory(models.Model):
+    restorant = models.ForeignKey(Restorant, on_delete=models.CASCADE)
+    product = models.ForeignKey(Product, on_delete=models.CASCADE)
+    quantity = models.IntegerField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.item.name
+
+#
+#
+#
+# models for Hostel + Mess Management System
+
+
+class Hostel(models.Model):
+    name = models.CharField(max_length=200)
+    address = models.CharField(max_length=200)
+    phone = models.CharField(max_length=200)
+    email = models.EmailField()
+    website = models.URLField(null=True, blank=True)
+    logo = models.ImageField(
+        upload_to='hostel_logo/', null=True, blank=True)
+    created_by = models.ForeignKey(
+        AuthUser, on_delete=models.CASCADE, related_name='hostel_created_by')
+    manager_hostel = models.ForeignKey(
+        AuthUser, on_delete=models.CASCADE, related_name='manager_hostel', null=True, blank=True)
+    staffs = models.ManyToManyField(
+        AuthUser, related_name='hostel_staffs', blank=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Room(models.Model):
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    number = models.IntegerField()
+    capacity = models.IntegerField()
+    status = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Student(models.Model):
+    user = models.OneToOneField(
+        AuthUser, on_delete=models.CASCADE, related_name='student')
+    roll = models.CharField(max_length=200)
+    room = models.ForeignKey(Room, on_delete=models.CASCADE)
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    image = models.ImageField(
+        upload_to='student_image/', null=True, blank=True)
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.user.username
+
+
+class Meal(models.Model):
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    price = models.FloatField()
+    description = models.TextField(null=True, blank=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class MealOrder(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    meal = models.ForeignKey(Meal, on_delete=models.CASCADE)
+    quantity = models.IntegerField()
+    total = models.FloatField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.student.user.username
+
+
+class Payment(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    total = models.FloatField()
+    payment_method = models.CharField(max_length=200)
+    paid = models.FloatField()
+    due = models.FloatField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.student.user.username
+
+
+class Visitor(models.Model):
+    name = models.CharField(max_length=200)
+    phone = models.CharField(max_length=200)
+    address = models.CharField(max_length=200)
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    purpose = models.TextField()
+    in_time = models.DateTimeField(auto_now_add=True)
+    out_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Complaint(models.Model):
+    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title
+
+
+class Notice(models.Model):
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title
+
+
+class Event(models.Model):
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    date = models.DateField()
+    time = models.TimeField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title
+
+
+class Expense(models.Model):
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    amount = models.FloatField()
+    created_by = models.ForeignKey(
+        AuthUser, on_delete=models.CASCADE, related_name='expense_created_by')
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title
+
+
+class Selary(models.Model):
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    staff = models.ForeignKey(
+        AuthUser, on_delete=models.CASCADE, related_name='staff')
+    amount = models.FloatField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.staff.username
