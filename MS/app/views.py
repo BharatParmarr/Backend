@@ -1,8 +1,8 @@
 from django.shortcuts import render
 from rest_framework import viewsets
 from django.db.models import Q
-from .models import Hostel, Inventory, Product, Profile, Restorant, Room, Student, Table, Category, Item, Order, OrderDetail
-from .serializers import HostelSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, StudentSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer
+from .models import Hostel, Inventory, Meal, MealItem, Notice, Payment, Product, Profile, Restorant, Room, Student, Table, Category, Item, Order, OrderDetail
+from .serializers import HostelSerializer, MealItemSerializer, MealOrderSerializer, MealSerializer, NoticeSerializer, PaymentSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, StudentSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer
 
 # user
 from django.contrib.auth import get_user_model
@@ -654,7 +654,7 @@ class HostelViewSet(APIView):
 
     def post(self, request):
         user = request.user
-        data = request.data
+        data = request.data.copy()
         data['created_by'] = user.id
         serializer = HostelSerializer(data=data)
         serializer.is_valid(raise_exception=True)
@@ -682,9 +682,15 @@ class RoomViewSet(APIView):
     def get(self, request):
         user = request.user
         hostel_id = request.query_params.get('hostel_id')
+        room_id = request.query_params.get('room_id')
         if hostel_id:
+            if room_id:
+                room = Room.objects.get(id=room_id)
+                if room.hostel.created_by == user or room.hostel.manager_hostel == user or user in room.hostel.staffs.all():
+                    serializer = RoomSerializer(room)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
             hostel = Hostel.objects.get(id=hostel_id)
-            if hostel.created_by == user:
+            if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
                 rooms = Room.objects.filter(hostel=hostel_id)
                 serializer = RoomSerializer(rooms, many=True)
                 return Response(serializer.data, status=status.HTTP_200_OK)
@@ -712,6 +718,16 @@ class RoomViewSet(APIView):
         else:
             return Response({"error": "You are not authorized to delete this room"}, status=status.HTTP_403_FORBIDDEN)
 
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        room = Room.objects.get(id=data['room_id'])
+        hostel = room.hostel
+        if hostel.created_by == request.user or hostel.manager_hostel == request.user:
+            room.capacity = data['capacity']
+            room.save()
+            return Response({"message": "Room capacity updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this room"}, status=status.HTTP_403_FORBIDDEN)
 # class StudentViewSet(viewsets.ModelViewSet):
 #     authentication_classes = [TokenAuthentication]
 #     queryset = Student.objects.all()
@@ -724,37 +740,304 @@ class StudentViewSet(APIView):
     def get(self, request):
         user = request.user
         hostel_id = request.query_params.get('hostel_id')
-        if hostel_id:
-            hostel = Hostel.objects.get(id=hostel_id)
-            if hostel.created_by == user:
-                students = Student.objects.filter(hostel=hostel_id)
-                serializer = StudentSerializer(students, many=True)
-                return Response(serializer.data, status=status.HTTP_200_OK)
+        room_id = request.query_params.get('room_id')
+        if int(room_id) == 0:
+            if hostel_id:
+                hostel = Hostel.objects.get(id=hostel_id)
+                if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
+                    students = Student.objects.filter(hostel=hostel_id)
+                    serializer = StudentSerializer(students, many=True)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+        elif room_id:
+            try:
+                room = Room.objects.get(id=room_id)
+                print(room.hostel.created_by, user)
+                if room.hostel.created_by == user or room.hostel.manager_hostel == user or user in room.hostel.staffs.all():
+                    students = Student.objects.filter(room=room_id)
+                    serializer = StudentSerializer(students, many=True)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+            except Room.DoesNotExist:
+                return Response({"error": "Room not found"}, status=status.HTTP_404_NOT_FOUND)
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
         return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
 
     def post(self, request):
         user = request.user
         data = request.data
-        print(data)
         hostel = Hostel.objects.get(id=data['hostel'])
-        if User.objects.get(username=data['user']):
+        if User.objects.get(username=data['user']) and hostel.created_by == user:
             data['user'] = User.objects.get(username=data['user']).id
+            if Student.objects.filter(user=data['user'], hostel=hostel).exists():
+                return Response({"error": "Student already exists"}, status=status.HTTP_409_CONFLICT)
         else:
             return Response({"error": "User not found"}, status=status.HTTP_404_NOT_FOUND)
         if hostel.created_by == user:
-            serializer = StudentSerializer(data=data)
-            serializer.is_valid(raise_exception=True)
-            serializer.save()
-            return Response(serializer.data, status=status.HTTP_201_CREATED)
+            try:
+                serializer = StudentSerializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                # print(e)
+                return Response({"error": str(e)}, status=status.HTTP_412_PRECONDITION_FAILED)
         else:
+            print("You are not authorized to create student for this hostel")
             return Response({"error": "You are not authorized to create student for this hostel"}, status=status.HTTP_403_FORBIDDEN)
 
-    def delete(self, request, *args, **kwargs):
-        data = request.data
-        student = Student.objects.get(id=data['student_id'])
+    def delete(self, request, pk, format=None):
+        # data = request.data
+        student = Student.objects.get(id=pk)
         hostel = student.hostel
         if hostel.created_by == request.user:
             student.delete()
             return Response({"message": "Student deleted"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "You are not authorized to delete this student"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, pk, format=None):
+        data = request.data
+        student = Student.objects.get(id=pk)
+        hostel = student.hostel
+        if hostel.created_by == request.user or hostel.manager_hostel == request.user:
+            student.room = Room.objects.get(id=int(data['room']))
+            student.save()
+            return Response({"message": "Student room updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this student"}, status=status.HTTP_403_FORBIDDEN)
+
+# Payment views ==================================================
+# class Payment(models.Model):
+#     student = models.ForeignKey(Student, on_delete=models.CASCADE)
+#     total = models.FloatField()
+#     payment_method = models.CharField(max_length=200)
+#     paid = models.FloatField()
+#     due = models.FloatField()
+#     created_time = models.DateTimeField(auto_now_add=True)
+#     updated_time = models.DateTimeField(auto_now=True)
+
+#     def __str__(self):
+#         return self.student.user.username
+
+
+class PaymentViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostel_id = request.query_params.get('hostel_id')
+        if hostel_id:
+            hostel = Hostel.objects.get(id=hostel_id)
+            if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
+                payments = Payment.objects.filter(student__hostel=hostel_id)
+                serializer = PaymentSerializer(payments, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data.copy()
+        hostel = Hostel.objects.get(id=data['hostel'])
+        print(hostel.created_by, user, data)
+        if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
+            try:
+                total = int(data['total'])
+                paid = int(data['paid'])
+                due = total - paid
+                data['due'] = due
+                serializer = PaymentSerializer(data=data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_201_CREATED)
+            except Exception as e:
+                print(e)
+                return Response({"error": str(e)}, status=status.HTTP_412_PRECONDITION_FAILED)
+        else:
+            return Response({"error": "You are not authorized to add payment"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        payment = Payment.objects.get(id=data['payment_id'])
+        hostel = payment.student.hostel
+        if hostel.created_by == request.user:
+            payment.delete()
+            return Response({"message": "Payment deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this payment"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        payment = Payment.objects.get(id=data['payment_id'])
+        hostel = payment.student.hostel
+        if hostel.created_by == request.user:
+            payment.paid = data['paid']
+            payment.due = payment.total - data['paid']
+            payment.save()
+            return Response({"message": "Payment updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this payment"}, status=status.HTTP_403_FORBIDDEN)
+
+# meal views ==================================================
+# class Meal(models.Model):
+#     hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+#     name = models.CharField(max_length=200)
+#     price = models.FloatField()
+#     description = models.TextField(null=True, blank=True)
+#     updated_time = models.DateTimeField(auto_now=True)
+
+#     def __str__(self):
+#         return self.name
+
+
+class MealViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostel_id = request.query_params.get('hostel_id')
+        if hostel_id:
+            hostel = Hostel.objects.get(id=hostel_id)
+            if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
+                meals = Meal.objects.filter(hostel=hostel_id)
+                serializer = MealSerializer(meals, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        hostel_id = request.query_params.get('hostel_id')
+        new_data = {
+            'hostel': hostel_id,
+            'name': data['name'],
+            'MealTime': data['time'],
+        }
+        MealOrderData = []
+
+        # print(data)
+        hostel = Hostel.objects.get(id=hostel_id)
+        if hostel.created_by == user:
+            serializer = MealSerializer(data=new_data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            # create mealOrder
+            for i in data['mealItems']:
+                MealOrderData.append({
+                    'meal': serializer.data['id'],
+                    'meal_item': i['meal'],
+                    'quantity': i['quantity'],
+                    'unlimited': i['unlimited'],
+                    'hostel': hostel_id,
+                })
+            serializer_mealOrder = MealOrderSerializer(
+                data=MealOrderData, many=True)
+            serializer_mealOrder.is_valid(raise_exception=True)
+            serializer_mealOrder.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add meal"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        meal = Meal.objects.get(id=data['meal_id'])
+        hostel = meal.hostel
+        if hostel.created_by == request.user:
+            meal.delete()
+            return Response({"message": "Meal deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this meal"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        meal = Meal.objects.get(id=data['meal_id'])
+        hostel = meal.hostel
+        if hostel.created_by == request.user or hostel.manager_hostel == request.user:
+            meal.price = data['price']
+            meal.save()
+            return Response({"message": "Meal price updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this meal"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class MealItemView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostel_id = request.query_params.get('hostel_id')
+        if hostel_id:
+            hostel = Hostel.objects.get(id=hostel_id)
+            if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
+                meal_items = MealItem.objects.filter(hostel=hostel_id)
+                serializer = MealItemSerializer(meal_items, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        hostel = Hostel.objects.get(id=data['hostel'])
+        if hostel.created_by == user:
+            serializer = MealItemSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add meal item"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        meal_item = MealItem.objects.get(id=data['meal_item_id'])
+        hostel = meal_item.hostel
+        if hostel.created_by == request.user:
+            meal_item.delete()
+            return Response({"message": "Meal item deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this meal item"}, status=status.HTTP_403_FORBIDDEN)
+
+
+# class Notice(models.Model):
+#     hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+#     title = models.CharField(max_length=200)
+#     description = models.TextField()
+#     created_time = models.DateTimeField(auto_now_add=True)
+#     updated_time = models.DateTimeField(auto_now=True)
+
+#     def __str__(self):
+#         return self.title
+
+class NoticeViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostel_id = request.query_params.get('hostel_id')
+        if hostel_id:
+            hostel = Hostel.objects.get(id=hostel_id)
+            if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
+                notices = Notice.objects.filter(hostel=hostel_id)[::-1]
+                serializer = NoticeSerializer(notices, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        hostel = Hostel.objects.get(id=data['hostel'])
+        if hostel.created_by == user:
+            serializer = NoticeSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add notice"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        notice = Notice.objects.get(id=data['notice_id'])
+        hostel = notice.hostel
+        if hostel.created_by == request.user:
+            notice.delete()
+            return Response({"message": "Notice deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this notice"}, status=status.HTTP_403_FORBIDDEN)

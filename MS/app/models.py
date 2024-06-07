@@ -223,6 +223,12 @@ class Room(models.Model):
         return self.name
 
 
+def student_image_name(instance, filename):
+    extension = os.path.splitext(filename)[1]  # Get the file extension
+    random_string = str(uuid.uuid4())
+    return 'student_image/' + random_string + extension
+
+
 class Student(models.Model):
     user = models.OneToOneField(
         AuthUser, on_delete=models.CASCADE, related_name='student')
@@ -230,7 +236,7 @@ class Student(models.Model):
     room = models.ForeignKey(Room, on_delete=models.CASCADE)
     hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
     image = models.ImageField(
-        upload_to='student_image/', null=True, blank=True)
+        upload_to=student_image_name, null=True, blank=True)
     created_time = models.DateTimeField(auto_now_add=True)
     updated_time = models.DateTimeField(auto_now=True)
 
@@ -239,6 +245,18 @@ class Student(models.Model):
 
 
 class Meal(models.Model):
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    price = models.FloatField(null=True, blank=True)
+    description = models.TextField(null=True, blank=True)
+    MealTime = models.CharField(max_length=200)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.name
+
+
+class MealItem(models.Model):
     hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
     name = models.CharField(max_length=200)
     price = models.FloatField()
@@ -250,10 +268,13 @@ class Meal(models.Model):
 
 
 class MealOrder(models.Model):
-    student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    # student = models.ForeignKey(Student, on_delete=models.CASCADE)
+    hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
     meal = models.ForeignKey(Meal, on_delete=models.CASCADE)
+    meal_item = models.ForeignKey(MealItem, on_delete=models.CASCADE)
+    unlimited = models.BooleanField(default=True)
     quantity = models.IntegerField()
-    total = models.FloatField()
+    # total = models.FloatField()
     created_time = models.DateTimeField(auto_now_add=True)
     updated_time = models.DateTimeField(auto_now=True)
 
@@ -269,6 +290,7 @@ class Payment(models.Model):
     due = models.FloatField()
     created_time = models.DateTimeField(auto_now_add=True)
     updated_time = models.DateTimeField(auto_now=True)
+    payment_for = models.DateField(blank=True, null=True)
 
     def __str__(self):
         return self.student.user.username

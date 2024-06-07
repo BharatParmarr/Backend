@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import Product, Restorant, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student
+from .models import Meal, MealItem, MealOrder, Notice, Payment, Product, Restorant, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student
 
 
 class RestorantSerializer(serializers.ModelSerializer):
@@ -77,16 +77,68 @@ class HostelSerializer(serializers.ModelSerializer):
 
 
 class RoomSerializer(serializers.ModelSerializer):
+    students = serializers.SerializerMethodField()
+
     class Meta:
         model = Room
-        fields = '__all__'
+        fields = ['hostel', 'number', 'name', 'students', 'id', 'capacity']
+
+    def get_students(self, obj):
+        students = Student.objects.filter(room=obj.id)
+        return StudentSerializer(students, many=True).data
 
 
 class StudentSerializer(serializers.ModelSerializer):
     username = serializers.CharField(source='user.username', read_only=True)
     image = serializers.ImageField(
         max_length=None, use_url=True, required=False)
+    room_number = serializers.CharField(source='room.number', read_only=True)
 
     class Meta:
         model = Student
-        fields = ['user', 'room', 'username', 'id', 'roll', 'image']
+        fields = ['user', 'room', 'username', 'id',
+                  'roll', 'image', 'hostel', 'room_number']
+
+
+class MealSerializer(serializers.ModelSerializer):
+    MealItems = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Meal
+        fields = '__all__'
+
+    def get_MealItems(self, obj):
+        MealItems = MealOrder.objects.filter(meal=obj.id)
+        return MealOrderSerializer(MealItems, many=True).data
+
+
+class PaymentSerializer(serializers.ModelSerializer):
+    student_name = serializers.CharField(
+        source='student.user.username', read_only=True)
+
+    class Meta:
+        model = Payment
+        fields = ['id', 'student', 'paid', 'due', 'payment_method',
+                  'payment_for', 'updated_time', 'student_name', 'total']
+
+
+class MealItemSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = MealItem
+        fields = '__all__'
+
+
+class MealOrderSerializer(serializers.ModelSerializer):
+    name = serializers.CharField(source='meal_item.name', read_only=True)
+
+    class Meta:
+        model = MealOrder
+        fields = '__all__'
+
+
+class NoticeSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Notice
+        fields = '__all__'

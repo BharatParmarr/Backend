@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import HostelViewSet, InventoryViewSet, LoginView, ModifyOrder, OrderCompleteView, OrderCreateView, OrderHistory, ProductViewSet, ProductquantityViewSet, Record_payment, RestorantViewSet, RoomViewSet, SignupView, StudentViewSet, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, Userdata, VerifyOTPView, DataAnalysis
+from .views import HostelViewSet, InventoryViewSet, LoginView, MealItemView, MealViewSet, ModifyOrder, NoticeViewSet, OrderCompleteView, OrderCreateView, OrderHistory, PaymentViewSet, ProductViewSet, ProductquantityViewSet, Record_payment, RestorantViewSet, RoomViewSet, SignupView, StudentViewSet, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, Userdata, VerifyOTPView, DataAnalysis
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -34,6 +34,12 @@ urlpatterns = [
     path('api/hostels', RoomViewSet.as_view(), name='room'),
     path('api/hostel/rooms', RoomViewSet.as_view(), name='room'),
     path('api/hostel/students', StudentViewSet.as_view(), name='student'),
+    path('api/hostel/students/<int:pk>',
+         StudentViewSet.as_view(), name='student'),
+    path('api/hostel/meals', MealViewSet.as_view(), name='student'),
+    path('api/hostel/mealsitem', MealItemView.as_view(), name='student'),
+    path('api/hostel/payments', PaymentViewSet.as_view(), name='student'),
+    path('api/hostel/notice', NoticeViewSet.as_view(), name='student'),
 ]
 
 if settings.DEBUG:
