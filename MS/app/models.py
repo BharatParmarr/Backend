@@ -5,7 +5,6 @@ from django.contrib.auth.models import AbstractUser, Group, Permission
 from django.utils.translation import gettext_lazy as _
 # Create your models here.
 # user
-from django.contrib.auth.models import User as AuthUser
 
 
 def Profile_image_name(instance, filename):
@@ -16,8 +15,8 @@ def Profile_image_name(instance, filename):
 
 class User(AbstractUser):
     email = models.EmailField(unique=True)
-    phone = models.CharField(max_length=200)
-    address = models.CharField(max_length=200)
+    phone = models.CharField(max_length=200, null=True, blank=True)
+    address = models.CharField(max_length=200, null=True, blank=True)
     image = models.ImageField(
         upload_to=Profile_image_name, null=True, blank=True)
     # profile = models.OneToOneField(
@@ -33,7 +32,6 @@ class User(AbstractUser):
         related_name="custom_user_set",
         related_query_name="user",
     )
-
     user_permissions = models.ManyToManyField(
         Permission,
         verbose_name=_('user permissions'),
@@ -46,12 +44,30 @@ class User(AbstractUser):
     def __str__(self):
         return self.username
 
+
+class SubscriptionBuyer(models.Model):
+    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    subscription = models.BooleanField(default=False)
+    created_time = models.DateTimeField(auto_now_add=True)
+    subscription_time = models.DateTimeField(null=True, blank=True)
+
+    def __str__(self):
+        return self.user.username
+
+
+class Subscribers(models.Model):
+    email = models.EmailField(unique=True)
+    created_time = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.email
+
 # restorant management system
 
 
 class Profile(models.Model):
     user = models.OneToOneField(
-        AuthUser, on_delete=models.CASCADE, related_name='profile')
+        User, on_delete=models.CASCADE, related_name='profile')
     otp = models.IntegerField()
     otp_verified = models.BooleanField(default=False)
 
@@ -66,7 +82,7 @@ def restorant_logo_name(instance, filename):
 
 
 class Restorant(models.Model):
-    name = models.CharField(max_length=200)
+    name = models.CharField(max_length=200, unique=True)
     address = models.CharField(max_length=200)
     phone = models.CharField(max_length=200)
     email = models.EmailField()
@@ -74,11 +90,11 @@ class Restorant(models.Model):
     logo = models.ImageField(
         upload_to='restorant_logo/', null=True, blank=True)
     created_by = models.ForeignKey(
-        AuthUser, on_delete=models.CASCADE, related_name='created_by')
+        User, on_delete=models.CASCADE, related_name='created_by')
     manager_restorant = models.ForeignKey(
-        AuthUser, on_delete=models.CASCADE, related_name='manager_restorant', null=True, blank=True)
+        User, on_delete=models.CASCADE, related_name='manager_restorant', null=True, blank=True)
     staffs = models.ManyToManyField(
-        AuthUser, related_name='staffs', blank=True)
+        User, related_name='staffs', blank=True)
 
     def __str__(self):
         return self.name
@@ -99,6 +115,7 @@ class Category(models.Model):
     name = models.CharField(max_length=200)
     description = models.TextField()
     restorant = models.ForeignKey(Restorant, on_delete=models.CASCADE)
+    active = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
@@ -116,6 +133,8 @@ class Item(models.Model):
     description = models.TextField()
     price = models.FloatField()
     image = models.ImageField(upload_to='item_image/', null=True, blank=True)
+    veg = models.BooleanField(default=True)
+    active = models.BooleanField(default=False)
 
     def __str__(self):
         return self.name
@@ -127,6 +146,7 @@ class Order(models.Model):
     order_time = models.DateTimeField(auto_now_add=True)
     order_number = models.IntegerField()
     completed_time = models.DateTimeField(auto_now=True)
+    order_ip_address = models.GenericIPAddressField(null=True, blank=True)
 
     def __str__(self):
         return self.table.name
@@ -140,7 +160,8 @@ class OrderDetail(models.Model):
     total = models.FloatField()
     is_completed = models.BooleanField(default=False)
     created_time = models.DateTimeField(auto_now_add=True)
-    completed_time = models.DateTimeField(auto_now=True)
+    completed_time = models.DateTimeField(
+        auto_now=True)
 
     def __str__(self):
         return self.item.name
@@ -194,7 +215,7 @@ class Inventory(models.Model):
 
 
 class Hostel(models.Model):
-    name = models.CharField(max_length=200)
+    name = models.CharField(max_length=200, unique=True)
     address = models.CharField(max_length=200)
     phone = models.CharField(max_length=200)
     email = models.EmailField()
@@ -202,11 +223,11 @@ class Hostel(models.Model):
     logo = models.ImageField(
         upload_to='hostel_logo/', null=True, blank=True)
     created_by = models.ForeignKey(
-        AuthUser, on_delete=models.CASCADE, related_name='hostel_created_by')
+        User, on_delete=models.CASCADE, related_name='hostel_created_by')
     manager_hostel = models.ForeignKey(
-        AuthUser, on_delete=models.CASCADE, related_name='manager_hostel', null=True, blank=True)
+        User, on_delete=models.CASCADE, related_name='manager_hostel', null=True, blank=True)
     staffs = models.ManyToManyField(
-        AuthUser, related_name='hostel_staffs', blank=True)
+        User, related_name='hostel_staffs', blank=True)
 
     def __str__(self):
         return self.name
@@ -231,7 +252,7 @@ def student_image_name(instance, filename):
 
 class Student(models.Model):
     user = models.OneToOneField(
-        AuthUser, on_delete=models.CASCADE, related_name='student')
+        User, on_delete=models.CASCADE, related_name='student')
     roll = models.CharField(max_length=200)
     room = models.ForeignKey(Room, on_delete=models.CASCADE)
     hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
@@ -350,7 +371,7 @@ class Expense(models.Model):
     description = models.TextField()
     amount = models.FloatField()
     created_by = models.ForeignKey(
-        AuthUser, on_delete=models.CASCADE, related_name='expense_created_by')
+        User, on_delete=models.CASCADE, related_name='expense_created_by')
     created_time = models.DateTimeField(auto_now_add=True)
     updated_time = models.DateTimeField(auto_now=True)
 
@@ -361,10 +382,25 @@ class Expense(models.Model):
 class Selary(models.Model):
     hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
     staff = models.ForeignKey(
-        AuthUser, on_delete=models.CASCADE, related_name='staff')
+        User, on_delete=models.CASCADE, related_name='staff')
     amount = models.FloatField()
     created_time = models.DateTimeField(auto_now_add=True)
     updated_time = models.DateTimeField(auto_now=True)
 
     def __str__(self):
         return self.staff.username
+
+
+# block ip address
+class BlockIP(models.Model):
+    ip = models.GenericIPAddressField()
+    reason = models.TextField()
+    restorant = models.ForeignKey(
+        Restorant, on_delete=models.CASCADE, null=True, blank=True)
+    hostel = models.ForeignKey(
+        Hostel, on_delete=models.CASCADE, null=True, blank=True)
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.ip

@@ -1,8 +1,27 @@
 from rest_framework import serializers
-from .models import Meal, MealItem, MealOrder, Notice, Payment, Product, Restorant, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student
+
+from .models import BlockIP, Meal, MealItem, MealOrder, Notice, Payment, Product, Restorant, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student, User
+
+
+class AuthUserSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = User
+        fields = ['id', 'username', 'email']
+
+
+class UserSerializer(serializers.ModelSerializer):
+    image = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = User
+        fields = ['username', 'email', 'image', 'phone', 'address']
 
 
 class RestorantSerializer(serializers.ModelSerializer):
+    logo = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
     class Meta:
         model = Restorant
         fields = '__all__'
@@ -141,4 +160,11 @@ class NoticeSerializer(serializers.ModelSerializer):
 
     class Meta:
         model = Notice
+        fields = '__all__'
+
+
+class BlockIpSerializer(serializers.Serializer):
+
+    class Meta:
+        model = BlockIP
         fields = '__all__'

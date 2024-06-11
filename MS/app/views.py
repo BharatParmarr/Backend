@@ -1,8 +1,12 @@
+from django.forms import ValidationError
+from django.utils import timezone
+from datetime import timedelta
+import json
 from django.shortcuts import render
 from rest_framework import viewsets
 from django.db.models import Q
-from .models import Hostel, Inventory, Meal, MealItem, Notice, Payment, Product, Profile, Restorant, Room, Student, Table, Category, Item, Order, OrderDetail
-from .serializers import HostelSerializer, MealItemSerializer, MealOrderSerializer, MealSerializer, NoticeSerializer, PaymentSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, StudentSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer
+from .models import BlockIP, Hostel, Inventory, Meal, MealItem, Notice, Payment, Product, Profile, Restorant, Room, Student, Table, Category, Item, Order, OrderDetail
+from .serializers import AuthUserSerializer, BlockIpSerializer, HostelSerializer, MealItemSerializer, MealOrderSerializer, MealSerializer, NoticeSerializer, PaymentSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, StudentSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer, UserSerializer
 
 # user
 from django.contrib.auth import get_user_model
@@ -18,7 +22,7 @@ from rest_framework.authtoken.models import Token
 from rest_framework.authentication import TokenAuthentication
 from rest_framework.permissions import IsAuthenticated
 # models for order
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.core.exceptions import ObjectDoesNotExist
 # changel websocket
 from channels.layers import get_channel_layer
@@ -28,14 +32,95 @@ from asgiref.sync import async_to_sync
 from django.db.models import Count, Sum, Avg
 from django.db.models import F, ExpressionWrapper, fields
 from django.db.models.functions import Cast
+from django.db.models.functions import ExtractHour
+# google auth
+from social_django.utils import psa
+from social_core.backends.oauth import BaseOAuth2
+from social_core.exceptions import AuthTokenError
+from social_django.utils import load_strategy, load_backend
+from rest_framework.exceptions import AuthenticationFailed
+
+User = get_user_model()
 
 
 def Home(request):
     return render(request, 'home.html')
 
 
+class GoogleLogin(APIView):
+
+    def post(self, request):
+        try:
+            token = request.data.get('token')
+            backend = load_backend(
+                strategy=load_strategy(request),
+                name='google-oauth2',
+                redirect_uri=None
+            )
+            user = backend.do_auth(token)
+            if user is None:
+                raise AuthenticationFailed('Authentication failed.')
+
+            if User.objects.filter(email=user.email).exists():
+                # Check if user can be saved
+                try:
+                    user.full_clean()
+                except ValidationError as e:
+                    # Handle the validation error
+                    return Response({'error': str(e)})
+
+                login(request, user)
+                user.save()
+                user_instance = User.objects.get(email=user.email)
+                print(user, 'user', user_instance)
+
+                # Ensure atomicity of the token retrieval/creation process
+                if user is None or not user.pk:
+                    raise ValueError(
+                        'User instance does not exist or is not saved in the database.')
+
+                # Ensure atomicity of the token retrieval/creation process
+                try:
+                    with transaction.atomic():
+                        token, created = Token.objects.get_or_create(
+                            user=user_instance)
+                except IntegrityError:
+                    raise ValueError(
+                        'FOREIGN KEY constraint failed. User instance does not exist.')
+                if token is None:
+                    raise Exception('Token creation failed.')
+
+                return Response({'token': token.key})
+            else:
+                return Response({'error': 'Invalid Token or create user'}, status=status.HTTP_400_BAD_REQUEST)
+        except IntegrityError as e:
+            print(e, 'error')
+            return Response({'error': str(e)})
+            # print(user, 'user')
+            # if user:
+            #     if User.objects.filter(email=user.email).exists():
+            #         user.backend = 'django.contrib.auth.backends.ModelBackend'
+            #         login(request, user)
+            #         print(user)
+            #         token, created = Token.objects.get_or_create(user=user)
+            #         return Response({'token': token.key})
+            #     else:
+            #         new_user = User.objects.create_user(
+            #             username=user.email, email=user.email)
+            #         new_user.save()
+            #         new_user.backend = 'django.contrib.auth.backends.ModelBackend'
+            #         login(request, new_user)
+            #         token, created = Token.objects.get_or_create(
+            #             user=new_user)
+            #         return Response({'token': token.key})
+            # else:
+            #     return Response({'error': 'Invalid Token'}, status=status.HTTP_400_BAD_REQUEST)
+        except AuthTokenError as e:
+            return Response({'error': str(e)}, status=status.HTTP_400_BAD_REQUEST)
+
+
 # user login, sing up, logout, profile, password change, password reset, password reset done, password reset confirm, password reset complete
-User = get_user_model()
+# User = get_user_model()
 
 
 class SignupView(APIView):
@@ -97,12 +182,23 @@ class VerifyOTPView(APIView):
 class LoginView(APIView):
     permission_classes = [AllowAny]
 
+    # def post(self, request):
+    #     email = request.data.get('email')
+    #     password = request.data.get('password')
+    #     user = User.objects.filter(username=email).first()
+    #     if user is not None and user.check_password(password):
+    #         login(request, user)
+    #         token, created = Token.objects.get_or_create(user=user)
+    #         return Response({"token": token.key}, status=status.HTTP_200_OK)
+    #     else:
+    #         return Response({"error": "Wrong Credentials"}, status=status.HTTP_400_BAD_REQUEST)
     def post(self, request):
         email = request.data.get('email')
         password = request.data.get('password')
-        user = authenticate(request, username=email, password=password)
+        user = User.objects.filter(Q(username=email) | Q(email=email)).first()
         print(user, email, password)
         if user is not None:
+            user.backend = 'django.contrib.auth.backends.ModelBackend'
             login(request, user)
             token, created = Token.objects.get_or_create(user=user)
             return Response({"token": token.key}, status=status.HTTP_200_OK)
@@ -115,8 +211,23 @@ class Userdata(APIView):
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
+        # print ip
+        ip = request.META.get('REMOTE_ADDR')
+        print(ip)
         user = request.user
-        return Response({"username": user.username, "email": user.email}, status=status.HTTP_200_OK)
+        serializer = UserSerializer(user)
+        return Response(serializer.data)
+
+    def post(self, request):
+        data = request.data
+        user = request.user
+        serializer = UserSerializer(user, data=data, partial=True)
+        try:
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+        except Exception as e:
+            return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        return Response({"message": "User data updated"}, status=status.HTTP_200_OK)
 
 
 class RestorantViewSet(viewsets.ModelViewSet):
@@ -144,13 +255,143 @@ class RestorantViewSet(viewsets.ModelViewSet):
         return Restorant.objects.filter(Q(manager_restorant=user) | Q(staffs=user) | Q(created_by=user))
 
     def create(self, request, *args, **kwargs):
-        data = request.data
-        data['created_by'] = request.user.id
-        serializer = self.get_serializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        self.perform_create(serializer)
-        headers = self.get_success_headers(serializer.data)
+        try:
+            data = request.data
+            data['created_by'] = request.user.id
+            serializer = self.get_serializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            self.perform_create(serializer)
+            headers = self.get_success_headers(serializer.data)
+        except Exception as e:
+            if 'name' in str(e):
+                return Response({"error": "Restorant name already exists."}, status=status.HTTP_409_CONFLICT)
+            elif 'website' in str(e):
+                return Response({"error": "Website name not appropriate."}, status=status.HTTP_409_CONFLICT)
+            return Response({"error": 'Something went wrong.'}, status=status.HTTP_400_BAD_REQUEST)
         return Response(serializer.data, status=status.HTTP_201_CREATED, headers=headers)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        restorant = Restorant.objects.get(id=data['restorant_id'])
+        if restorant.created_by == request.user:
+            restorant.delete()
+            return Response({"message": "Restorant deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this restorant"}, status=status.HTTP_403_FORBIDDEN)
+
+    def update(self, request, *args, **kwargs):
+        data = request.data.copy()
+        restorant = Restorant.objects.get(id=data['restorant_id'])
+        data['created_by'] = request.user.id
+        if restorant.created_by == request.user:
+            try:
+                serializer = self.get_serializer(
+                    restorant, data=data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            except Exception as e:
+                if 'name' in str(e):
+                    return Response({"error": "Hostel name already exists"}, status=status.HTTP_409_CONFLICT)
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
+        else:
+            return Response({"error": "You are not authorized to update this restorant"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class RestorantDetails(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                return Response(RestorantSerializer(restorant).data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request):
+        data = request.data
+        restorant = Restorant.objects.get(id=data['restorant_id'])
+        # data['created_by'] = request.user.id
+        if restorant.created_by == request.user:
+            try:
+                serializer = RestorantSerializer(
+                    restorant, data=data, partial=True)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            except Exception as e:
+                if 'name' in str(e):
+                    return Response({"error": "Hostel name already exists"}, status=status.HTTP_409_CONFLICT)
+        else:
+            return Response({"error": "You are not authorized to update this restorant"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class SetManagerRestorant(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user:
+                manager = restorant.manager_restorant
+                staffs = restorant.staffs.all()
+                return Response({
+                    'manager': manager.username if manager else None,
+                    'staffs': [staff.username for staff in staffs]
+                }, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        data = request.data
+        restorant = Restorant.objects.get(id=data['restorant_id'])
+        if restorant.created_by == request.user:
+            try:
+                manager = User.objects.get(username=data['username'])
+            except ObjectDoesNotExist:
+                return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+            restorant.staffs.add(manager)
+            restorant.save()
+            return Response({"message": "Manager set"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to set manager for this restorant"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request):
+        restorant = request.query_params.get('restorant_id')
+        restorant = Restorant.objects.get(id=data['restorant_id'])
+        user = request.query_params.get('manager_name')
+        try:
+            user = User.objects.get(username=user)
+        except ObjectDoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        is_manager = request.query_params.get('is_manager')
+        if is_manager == '1':
+            restorant.manager_restorant = None
+            restorant.save()
+            return Response({"message": "Manager removed"}, status=status.HTTP_200_OK)
+        if restorant.created_by == request.user:
+            restorant.staffs.remove(user)
+            restorant.save()
+            return Response({"message": "Staff removed"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to remove manager for this restorant"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request):
+        data = request.data
+        restorant = Restorant.objects.get(id=data['restorant_id'])
+        if restorant.created_by == request.user:
+            try:
+                manager = User.objects.get(username=data['username'])
+            except ObjectDoesNotExist:
+                return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+            restorant.manager_restorant = manager
+            restorant.save()
+            return Response({"message": "Manager set"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to set manager for this restorant"}, status=status.HTTP_403_FORBIDDEN)
 
 
 class TableViewSet(viewsets.ModelViewSet):
@@ -190,6 +431,20 @@ class TableViewSet(viewsets.ModelViewSet):
             return Response({"error": "You are not authorized to delete this table"}, status=status.HTTP_403_FORBIDDEN)
 
 
+class TableDetail(APIView):
+
+    def get(self, request):
+        table_id = request.query_params.get('table_id')
+        if table_id:
+            table = Table.objects.get(id=table_id)
+            data = {
+                'table_name': table.name,
+                'restorant_name': table.restorant.name,
+            }
+            return Response(data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+
 class CategoryViewSet(viewsets.ModelViewSet):
     queryset = Category.objects.all()
     serializer_class = CategorySerializer
@@ -202,6 +457,9 @@ class CategoryViewSet(viewsets.ModelViewSet):
             if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
                 return Category.objects.filter(restorant=restorant_id)
         # else return zero category
+        elif restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            return Category.objects.filter(restorant=restorant_id, active=True)
         return Category.objects.none()
 
     def create(self, request, *args, **kwargs):
@@ -227,6 +485,34 @@ class CategoryViewSet(viewsets.ModelViewSet):
             return Response({"error": "You are not authorized to delete this category"}, status=status.HTTP_403_FORBIDDEN)
 
 
+class CategoryActive(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def put(self, request):
+        data = request.data
+        category = Category.objects.get(id=data['category_id'])
+        if category.restorant.created_by == request.user:
+            category.active = not category.active
+            category.save()
+            return Response({"message": "Category updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this category"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ItemActive(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def put(self, request):
+        data = request.data
+        item = Item.objects.get(id=data['item_id'])
+        if item.category.restorant.created_by == request.user:
+            item.active = not item.active
+            item.save()
+            return Response({"message": "Item updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this item"}, status=status.HTTP_403_FORBIDDEN)
+
+
 class ItemViewSet(viewsets.ModelViewSet):
     queryset = Item.objects.all()
     serializer_class = ItemSerializer
@@ -234,10 +520,12 @@ class ItemViewSet(viewsets.ModelViewSet):
     def get_queryset(self):
         user = self.request.user
         category_id = self.request.query_params.get('category_id')
-        if user.is_authenticated and category_id:
+        if category_id:
             category = Category.objects.get(id=category_id)
             if category.restorant.created_by == user or category.restorant.manager_restorant == user or user in category.restorant.staffs.all():
                 return Item.objects.filter(category=category_id)
+            else:
+                return Item.objects.filter(category=category_id, active=True)
         # else return zero item
         return Item.objects.none()
 
@@ -320,15 +608,19 @@ class OrderDetailViewSet(viewsets.ModelViewSet):
 class OrderCreateView(APIView):
     def post(self, request, format=None):
         data = request.data
+        ip_address = request.META.get('REMOTE_ADDR')
+
         if not data['items']:
             return Response({'error': 'No items in order'}, status=status.HTTP_400_BAD_REQUEST)
         try:
             with transaction.atomic():
                 table = Table.objects.get(id=data['table'])
+                if BlockIP.objects.filter(ip=ip_address, restorant=table.restorant.id).exists():
+                    return Response({'error': 'Invalid data from user.'}, status=status.HTTP_403_FORBIDDEN)
                 order_number = Order.objects.filter(
                     table=table, status=False).count()
                 order = Order.objects.create(
-                    table=table, order_number=order_number + 1)
+                    table=table, order_number=order_number + 1, order_ip_address=ip_address)
 
                 for item_data in data['items']:
                     item = Item.objects.get(id=item_data['item'])
@@ -337,7 +629,7 @@ class OrderCreateView(APIView):
                         item=item,
                         quantity=item_data['quantity'],
                         price=item.price,
-                        total=item.price * item_data['quantity']
+                        total=item.price * item_data['quantity'],
                     )
 
                 # Send message to WebSocket group
@@ -514,12 +806,19 @@ class DataAnalysis(APIView):
                         F('completed_time'), output_field=fields.DateTimeField()), output_field=fields.FloatField())
                 ).aggregate(avg_completion_time=Avg('completed_time_unix'))
 
+                # time of order according hour of day
+                order_time = Order.objects.filter(
+                    table__restorant=restorant).annotate(
+                    order_hour=ExtractHour('order_time')
+                ).values('order_hour').annotate(total_orders=Count('id'))
+
                 data = {
                     'items_sold': items_sold,
                     'item_revenue': list(item_revenue),
                     'category_data': list(category_data),
                     'item_creation_time': list(item_creation_time),
                     'avg_order_completion_time': avg_order_completion_time,
+                    'order_time': list(order_time),
                 }
                 return Response(data, status=status.HTTP_200_OK)
         return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
@@ -635,22 +934,26 @@ class InventoryViewSet(APIView):
 
 # hostel views ==================================================
 
-# class HostelViewSet(viewsets.ModelViewSet):
-#     authentication_classes = [TokenAuthentication]
-#     queryset = Hostel.objects.all()
-#     serializer_class = HostelSerializer
 
-#     def perform_create(self, serializer):
-#         serializer.save(created_by=self.request.user)
-#         return super().perform_create(serializer)
 class HostelViewSet(APIView):
     authentication_classes = [TokenAuthentication]
 
     def get(self, request):
-        user = request.user
-        hostels = Hostel.objects.filter(created_by=user)
-        serializer = HostelSerializer(hostels, many=True)
-        return Response(serializer.data)
+        if request.user.is_authenticated:
+            user = request.user
+            hostel_id = request.query_params.get('hostel_id')
+            if hostel_id:
+                hostel = Hostel.objects.get(id=hostel_id)
+                if hostel.created_by == user or hostel.manager_hostel == user or user in hostel.staffs.all():
+                    serializer = HostelSerializer(hostel)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+            hostels = Hostel.objects.filter(created_by=user)
+            serializer = HostelSerializer(hostels, many=True)
+            return Response(serializer.data, status=status.HTTP_200_OK)
+        # user = request.user
+        # hostels = Hostel.objects.filter(created_by=user)
+        # serializer = HostelSerializer(hostels, many=True)
+        # return Response(serializer.data)
 
     def post(self, request):
         user = request.user
@@ -670,10 +973,88 @@ class HostelViewSet(APIView):
         else:
             return Response({"error": "You are not authorized to delete this hostel"}, status=status.HTTP_403_FORBIDDEN)
 
-# class RoomViewSet(viewsets.ModelViewSet):
-#     authentication_classes = [TokenAuthentication]
-#     queryset = Room.objects.all()
-#     serializer_class = RoomSerializer
+    def put(self, request, *args, **kwargs):
+        data = request.data.copy()
+        hostel = Hostel.objects.get(id=data['hostel_id'])
+        data['created_by'] = request.user.id
+        if hostel.created_by == request.user:
+            try:
+                serializer = HostelSerializer(hostel, data=data)
+                serializer.is_valid(raise_exception=True)
+                serializer.save()
+                return Response({"message": "Hostel updated"}, status=status.HTTP_200_OK)
+            except Exception as e:
+                if 'name' in str(e):
+                    return Response({"error": "Hostel name already exists"}, status=status.HTTP_409_CONFLICT)
+
+        else:
+            return Response({"error": "You are not authorized to update this hostel"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class SetManagerHostel(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        hostel_id = request.query_params.get('hostel_id')
+        if hostel_id:
+            hostel = Hostel.objects.get(id=hostel_id)
+            if hostel.created_by == user:
+                manager = hostel.manager_hostel
+                staffs = hostel.staffs.all()
+                staffs_json = []
+                for staff in staffs:
+                    staffs_json.append(staff.username)
+                return Response({"manager": manager.username, "staffs": staffs_json}, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        data = request.data
+        hostel = Hostel.objects.get(id=data['hostel_id'])
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        if hostel.created_by == request.user:
+            hostel.staffs.add(user)
+            hostel.save()
+            return Response({"message": "Manager set"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to set manager for this hostel"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request):
+        data = request.data
+        hostel = Hostel.objects.get(id=data['hostel_id'])
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        if hostel.created_by == request.user:
+            hostel.manager_hostel = user
+            hostel.save()
+            return Response({"message": "Manager set"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to set manager for this hostel"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request):
+        hostel = request.query_params.get('hostel_id')
+        hostel = Hostel.objects.get(id=hostel)
+        user = request.query_params.get('manager_name')
+        try:
+            user = User.objects.get(username=user).id
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        is_manager = request.query_params.get('manager')
+        if is_manager == '1':
+            hostel.manager_hostel = None
+            hostel.save()
+            return Response({"message": "Manager removed"}, status=status.HTTP_200_OK)
+        if hostel.created_by == request.user:
+            hostel.staffs.remove(user)
+            hostel.save()
+            return Response({"message": "Staff removed"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to remove manager for this hostel"}, status=status.HTTP_403_FORBIDDEN)
 
 
 class RoomViewSet(APIView):
@@ -728,10 +1109,6 @@ class RoomViewSet(APIView):
             return Response({"message": "Room capacity updated"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "You are not authorized to update this room"}, status=status.HTTP_403_FORBIDDEN)
-# class StudentViewSet(viewsets.ModelViewSet):
-#     authentication_classes = [TokenAuthentication]
-#     queryset = Student.objects.all()
-#     serializer_class = StudentSerializer
 
 
 class StudentViewSet(APIView):
@@ -806,19 +1183,8 @@ class StudentViewSet(APIView):
         else:
             return Response({"error": "You are not authorized to update this student"}, status=status.HTTP_403_FORBIDDEN)
 
+
 # Payment views ==================================================
-# class Payment(models.Model):
-#     student = models.ForeignKey(Student, on_delete=models.CASCADE)
-#     total = models.FloatField()
-#     payment_method = models.CharField(max_length=200)
-#     paid = models.FloatField()
-#     due = models.FloatField()
-#     created_time = models.DateTimeField(auto_now_add=True)
-#     updated_time = models.DateTimeField(auto_now=True)
-
-#     def __str__(self):
-#         return self.student.user.username
-
 
 class PaymentViewSet(APIView):
     authentication_classes = [TokenAuthentication]
@@ -877,17 +1243,8 @@ class PaymentViewSet(APIView):
         else:
             return Response({"error": "You are not authorized to update this payment"}, status=status.HTTP_403_FORBIDDEN)
 
+
 # meal views ==================================================
-# class Meal(models.Model):
-#     hostel = models.ForeignKey(Hostel, on_delete=models.CASCADE)
-#     name = models.CharField(max_length=200)
-#     price = models.FloatField()
-#     description = models.TextField(null=True, blank=True)
-#     updated_time = models.DateTimeField(auto_now=True)
-
-#     def __str__(self):
-#         return self.name
-
 
 class MealViewSet(APIView):
     authentication_classes = [TokenAuthentication]
@@ -1041,3 +1398,94 @@ class NoticeViewSet(APIView):
             return Response({"message": "Notice deleted"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "You are not authorized to delete this notice"}, status=status.HTTP_403_FORBIDDEN)
+
+
+# block Ip address
+# class BlockIP(models.Model):
+#     ip = models.GenericIPAddressField()
+#     reason = models.TextField()
+#     restorant = models.ForeignKey(
+#         Restorant, on_delete=models.CASCADE, null=True, blank=True)
+#     hostel = models.ForeignKey(
+#         Hostel, on_delete=models.CASCADE, null=True, blank=True)
+#     created_time = models.DateTimeField(auto_now_add=True)
+#     updated_time = models.DateTimeField(auto_now=True)
+
+#     def __str__(self):
+#         return self.ip
+
+class BlockIp(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def post(self, request):
+        data = request.data
+        order = data['order_id']
+        if order:
+            order = Order.objects.get(id=order)
+            ip = order.order_ip_address
+        else:
+            return Response({"error": "Order not found"}, status=status.HTTP_404_NOT_FOUND)
+        user = request.user
+        if data['for'] == 'restorant':
+            restorant = request.query_params.get('restorant_id')
+            restoro = Restorant.objects.get(id=restorant)
+            if restoro.created_by == user or restoro.manager_restorant == user or user in restoro.staffs.all():
+                BlockIP.objects.create(
+                    ip=ip, reason=data['reason'], restorant=restoro)
+                return Response({"message": "IP blocked"}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to block IP for this restorant"}, status=status.HTTP_403_FORBIDDEN)
+        elif data['for'] == 'hostel':
+            hostel = request.query_params.get('hostel_id')
+            host = Hostel.objects.get(id=hostel)
+            if host.created_by == user or host.manager_hostel == user or user in host.staffs.all():
+                BlockIP.objects.create(
+                    ip=ip, reason=data['reason'], hostel=host)
+                return Response({"message": "IP blocked"}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to block IP for this hostel"}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({"error": "Invalid block for"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def get(self, request):
+        user = request.user
+        block_for = request.query_params.get('for')
+        if block_for == 'restorant':
+            restorant = request.query_params.get('restorant_id')
+            restoro = Restorant.objects.get(id=restorant)
+            if restoro.created_by == user or restoro.manager_restorant == user or user in restoro.staffs.all():
+                block_ips = BlockIP.objects.filter(restorant=restoro)
+                serializer = BlockIpSerializer(block_ips, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to view blocked IPs for this restorant"}, status=status.HTTP_403_FORBIDDEN)
+        elif block_for == 'hostel':
+            hostel = request.query_params.get('hostel_id')
+            host = Hostel.objects.get(id=hostel)
+            if host.created_by == user or host.manager_hostel == user or user in host.staffs.all():
+                block_ips = BlockIP.objects.filter(hostel=host)
+                serializer = BlockIpSerializer(block_ips, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to view blocked IPs for this hostel"}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({"error": "Invalid block for"}, status=status.HTTP_400_BAD_REQUEST)
+
+    def delete(self, request):
+        data = request.data
+        block_ip = BlockIP.objects.get(id=data['block_ip_id'])
+        user = request.user
+        if block_ip.restorant:
+            if block_ip.restorant.created_by == user:
+                block_ip.delete()
+                return Response({"message": "IP unblocked"}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to unblock this IP"}, status=status.HTTP_403_FORBIDDEN)
+        elif block_ip.hostel:
+            if block_ip.hostel.created_by == user:
+                block_ip.delete()
+                return Response({"message": "IP unblocked"}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to unblock this IP"}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            return Response({"error": "Invalid block for"}, status=status.HTTP_400_BAD_REQUEST)

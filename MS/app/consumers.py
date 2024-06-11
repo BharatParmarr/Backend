@@ -43,15 +43,19 @@ class OrderConsumer(AsyncWebsocketConsumer):
 
         # Save the new order and its details
         order = await self.create_order(order_data)
-
-        # Broadcast the new order to the group
-        await self.channel_layer.group_send(
-            self.room_group_name,
-            {
-                'type': 'order_update',
-                'order': order
-            }
-        )
+        if order:
+            # Broadcast the new order to the group
+            await self.channel_layer.group_send(
+                self.room_group_name,
+                {
+                    'type': 'order_update',
+                    'order': order
+                }
+            )
+        else:
+            await self.send(text_data=json.dumps({
+                'message': 'Invalid data from user.'
+            }))
 
     async def order_update(self, event):
         order = event['order']
@@ -63,17 +67,20 @@ class OrderConsumer(AsyncWebsocketConsumer):
 
     @sync_to_async
     def create_order(self, order_data):
-        from .models import Item, Order, OrderDetail, Table
+        from .models import Item, Order, OrderDetail, Table, BlockIP
         from .serializers import OrderSerializer
 
         if order_data:
             print(order_data, 'order data')
+            ip_address = self.scope['client'][0]
             with transaction.atomic():
                 table = Table.objects.get(id=order_data['table'])
+                if BlockIP.objects.filter(ip=ip_address, restorant=table.restorant.id).exists():
+                    return None
                 order_number = Order.objects.filter(
                     table=table, status=False).count()
                 order = Order.objects.create(
-                    table=table, order_number=order_number + 1)
+                    table=table, order_number=order_number + 1, order_ip_address=ip_address)
 
                 for item_data in order_data['items']:
                     item = Item.objects.get(id=item_data['item'])
