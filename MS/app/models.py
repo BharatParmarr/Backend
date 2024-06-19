@@ -1,3 +1,4 @@
+from datetime import datetime
 import os
 import uuid
 from django.db import models
@@ -46,13 +47,38 @@ class User(AbstractUser):
 
 
 class SubscriptionBuyer(models.Model):
-    user = models.OneToOneField(User, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    options = (
+        ('free', 'Free'),
+        ('premium', 'Premium'),
+        ('enterprise', 'Enterprise'),
+    )
+    type = models.CharField(max_length=20, choices=options, default='free')
     subscription = models.BooleanField(default=False)
     created_time = models.DateTimeField(auto_now_add=True)
-    subscription_time = models.DateTimeField(null=True, blank=True)
+    subscription_start_time = models.DateTimeField()
+    subscription_time = models.DateTimeField()
 
     def __str__(self):
         return self.user.username
+
+
+class Subscription_code(models.Model):
+    code = models.CharField(max_length=20, unique=True)
+    options = (
+        ('free', 'Free'),
+        ('premium', 'Premium'),
+        ('enterprise', 'Enterprise'),
+    )
+    type_of_subscription = models.CharField(
+        max_length=20, choices=options, default='free')
+    created_time = models.DateTimeField(auto_now_add=True)
+    subscription_time = models.DateTimeField(null=True, blank=True)
+    total_days = models.IntegerField()
+    useg_limit = models.IntegerField(default=1)
+
+    def __str__(self):
+        return self.code
 
 
 class Subscribers(models.Model):
@@ -95,6 +121,7 @@ class Restorant(models.Model):
         User, on_delete=models.CASCADE, related_name='manager_restorant', null=True, blank=True)
     staffs = models.ManyToManyField(
         User, related_name='staffs', blank=True)
+    active = models.BooleanField(default=True)
 
     def __str__(self):
         return self.name
@@ -147,6 +174,9 @@ class Order(models.Model):
     order_number = models.IntegerField()
     completed_time = models.DateTimeField(auto_now=True)
     order_ip_address = models.GenericIPAddressField(null=True, blank=True)
+    order_key = models.CharField(max_length=200, null=True, blank=True)
+    order_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='order_by', null=True, blank=True)
 
     def __str__(self):
         return self.table.name
@@ -393,7 +423,10 @@ class Selary(models.Model):
 
 # block ip address
 class BlockIP(models.Model):
-    ip = models.GenericIPAddressField()
+    ip = models.GenericIPAddressField(blank=True, null=True)
+    user = models.ForeignKey(
+        User, on_delete=models.CASCADE, null=True, blank=True)
+    key = models.CharField(max_length=200, null=True, blank=True)
     reason = models.TextField()
     restorant = models.ForeignKey(
         Restorant, on_delete=models.CASCADE, null=True, blank=True)
@@ -404,3 +437,115 @@ class BlockIP(models.Model):
 
     def __str__(self):
         return self.ip
+
+
+# service management system models ########################################
+def Service_shop_logo_name(instance, filename):
+    extension = os.path.splitext(filename)[1]  # Get the file extension
+    random_string = str(uuid.uuid4())
+    return 'service_shop_logo/' + random_string + extension
+
+
+class ServiceShop(models.Model):
+    name = models.CharField(max_length=200)
+    description = models.TextField(null=True, blank=True)
+    address = models.CharField(max_length=200, null=True, blank=True)
+    phone = models.CharField(max_length=200, null=True, blank=True)
+    email = models.EmailField(null=True, blank=True)
+    website = models.URLField(null=True, blank=True)
+    created_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='service_created_by')
+    staffs = models.ManyToManyField(
+        User, related_name='service_staffs', blank=True)
+    active = models.BooleanField(default=True)
+    logo = models.ImageField(
+        upload_to=Service_shop_logo_name, null=True, blank=True)
+
+    def __str__(self):
+        return self.name
+
+
+class ServiceTable(models.Model):
+    service_shop = models.ForeignKey(ServiceShop, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    capacity = models.IntegerField()
+    ocupied = models.IntegerField(default=0)
+    status = models.BooleanField(default=True)
+    active = models.BooleanField(default=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Service(models.Model):
+    service_table = models.ForeignKey(ServiceTable, on_delete=models.CASCADE)
+    name = models.CharField(max_length=200)
+    description = models.TextField(
+        null=True, blank=True)  # service description
+    # service price (in future we will add multiple prices for different time and days)
+    price = models.FloatField()
+    image = models.ImageField(
+        upload_to='service_image/', null=True, blank=True)  # service image( in future we will add multiple images)
+    # only active services will be shown in the shop
+    active = models.BooleanField(default=True)
+    aprox_time_min = models.IntegerField()  # in minutes
+    aprox_time_max = models.IntegerField()  # in minutes
+    discount = models.FloatField(default=0)  # 0 to 100 discount in percentage
+    rattings = models.FloatField(default=0)  # 0 to 5 service rating
+    # in views we will manualy allow only 3 services to be speciality
+    speciality = models.BooleanField(default=False)
+
+    def __str__(self):
+        return self.name
+
+
+class ServiceOrder(models.Model):
+    table = models.ForeignKey(ServiceTable, on_delete=models.CASCADE)
+    status = models.BooleanField(default=False)
+    order_time = models.DateTimeField(auto_now_add=True)
+    order_number = models.IntegerField()
+    completed_time = models.DateTimeField(auto_now=True)
+    order_ip_address = models.GenericIPAddressField(null=True, blank=True)
+    order_key = models.CharField(max_length=200, null=True, blank=True)
+    order_by = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='service_order_by', null=True, blank=True)
+
+    def __str__(self):
+        return self.table.name
+
+
+class ServiceOrderDetail(models.Model):
+    order = models.ForeignKey(ServiceOrder, on_delete=models.CASCADE)
+    service = models.ForeignKey(Service, on_delete=models.CASCADE)
+    quantity = models.IntegerField()
+    price = models.FloatField()
+    total = models.FloatField()
+    is_completed = models.BooleanField(default=False)
+    created_time = models.DateTimeField(auto_now_add=True)
+    completed_time = models.DateTimeField(
+        auto_now=True)
+
+    def __str__(self):
+        return self.service.name
+
+
+class ShopAnouncement(models.Model):
+    service_shop = models.ForeignKey(ServiceShop, on_delete=models.CASCADE)
+    title = models.CharField(max_length=200)
+    description = models.TextField()
+    created_time = models.DateTimeField(auto_now_add=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.title
+
+
+class ShopReview(models.Model):
+    service_shop = models.ForeignKey(ServiceShop, on_delete=models.CASCADE)
+    user = models.ForeignKey(User, on_delete=models.CASCADE)
+    rating = models.IntegerField()
+    review = models.TextField(null=True, blank=True)
+    created_time = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.user.username

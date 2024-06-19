@@ -1,12 +1,11 @@
 from django.forms import ValidationError
 from django.utils import timezone
-from datetime import timedelta
-import json
+from datetime import datetime, timedelta
 from django.shortcuts import render
 from rest_framework import viewsets
 from django.db.models import Q
-from .models import BlockIP, Hostel, Inventory, Meal, MealItem, Notice, Payment, Product, Profile, Restorant, Room, Student, Table, Category, Item, Order, OrderDetail
-from .serializers import AuthUserSerializer, BlockIpSerializer, HostelSerializer, MealItemSerializer, MealOrderSerializer, MealSerializer, NoticeSerializer, PaymentSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, StudentSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer, UserSerializer
+from .models import BlockIP, Hostel, Inventory, Meal, MealItem, Notice, Payment, Product, Profile, Restorant, Room, Service, ServiceOrder, ServiceOrderDetail, ServiceShop, ServiceTable, ShopAnouncement, ShopReview, Student, Subscription_code, SubscriptionBuyer, Table, Category, Item, Order, OrderDetail
+from .serializers import AuthUserSerializer, BlockIpSerializer, HostelSerializer, MealItemSerializer, MealOrderSerializer, MealSerializer, NoticeSerializer, PaymentSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, ServiceOrderDetailSerializer, ServiceOrderSerializer, ServiceSerializer, ServiceShopSerializer, ServiceTableSerializer, ShopAnouncementSerializer, ShopReviewSerializer, StudentSerializer, Subscription_codeSerializer, SubscriptionBuyerSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer, UserSerializer
 
 # user
 from django.contrib.auth import get_user_model
@@ -33,12 +32,19 @@ from django.db.models import Count, Sum, Avg
 from django.db.models import F, ExpressionWrapper, fields
 from django.db.models.functions import Cast
 from django.db.models.functions import ExtractHour
+from django.db.models import Case, When, Value, FloatField
 # google auth
 from social_django.utils import psa
 from social_core.backends.oauth import BaseOAuth2
 from social_core.exceptions import AuthTokenError
 from social_django.utils import load_strategy, load_backend
 from rest_framework.exceptions import AuthenticationFailed
+from faker import Faker
+
+from .pagination import CustomPagination
+
+fake = Faker()
+
 
 User = get_user_model()
 
@@ -230,6 +236,76 @@ class Userdata(APIView):
         return Response({"message": "User data updated"}, status=status.HTTP_200_OK)
 
 
+class Subscription_buy(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        subscription = SubscriptionBuyer.objects.filter(
+            user=user, subscription_time__gte=timezone.now())
+        print(subscription)
+        data = SubscriptionBuyerSerializer(subscription, many=True).data
+        return Response(data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        try:
+            data = request.data
+            user = request.user
+            # does user have subscription code
+            code = data['code']
+            print(code, 'code')
+            created_time = timezone.now()
+            if SubscriptionBuyer.objects.filter(user=user).exists():
+                created_time = SubscriptionBuyer.objects.filter(
+                    user=user).last().subscription_time
+                print(created_time, 'created_time')
+            if Subscription_code.objects.filter(code=code).exists():
+                subscription_code = Subscription_code.objects.get(code=code)
+                if subscription_code.useg_limit == 0:
+                    return Response({"error": "Subscription code already used"}, status=status.HTTP_400_BAD_REQUEST)
+                subscription_type = subscription_code.type_of_subscription
+                subscription = SubscriptionBuyer.objects.create(
+                    user=user, type=subscription_type, subscription_time=created_time + timedelta(days=subscription_code.total_days), created_time=created_time)
+                subscription.save()
+                if subscription_code.useg_limit == 0 or subscription_code.useg_limit < 0:
+                    subscription_code.delete()
+                elif subscription_code.useg_limit == 1:
+                    subscription_code.delete()
+                elif subscription_code.useg_limit > 1:
+                    subscription_code.useg_limit -= 1
+                    subscription_code.save()
+                return Response({"message": "Subscription bought"}, status=status.HTTP_201_CREATED)
+            else:
+                return Response({"error": "Invalid code"}, status=status.HTTP_400_BAD_REQUEST)
+        except Exception as e:
+            if 'code' in str(e):
+                return Response({"error": "Invalid code"}, status=status.HTTP_400_BAD_REQUEST)
+            elif 'type' in str(e):
+                return Response({"error": "Invalid type"}, status=status.HTTP_400_BAD_REQUEST)
+            elif 'UNIQUE' in str(e):
+                return Response({"error": "Subscription already exists"}, status=status.HTTP_400_BAD_REQUEST)
+            return Response({"error": 'Somthing went wrong!'}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class Subscription_codeViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    # def get(selt, requset):
+    #     codes = Subscription_code.objects.all()
+    #     return Response(Subscription_codeSerializer(codes, many=True).data, status=status.HTTP_200_OK)
+
+    def get(self, requset):
+        code = requset.query_params.get('code')
+        type = requset.query_params.get('type')
+        total_days = requset.query_params.get('total_days')
+        if code and type:
+            code = Subscription_code.objects.create(
+                code=code, type_of_subscription=type, total_days=total_days)
+            code.save()
+            return Response({"message": "Subscription code created"}, status=status.HTTP_201_CREATED)
+        return Response({"error": "Invalid data"}, status=status.HTTP_400_BAD_REQUEST)
+
+
 class RestorantViewSet(viewsets.ModelViewSet):
     authentication_classes = [TokenAuthentication]
     serializer_class = RestorantSerializer
@@ -256,6 +332,19 @@ class RestorantViewSet(viewsets.ModelViewSet):
 
     def create(self, request, *args, **kwargs):
         try:
+            # chkck for subscription
+            subscription = SubscriptionBuyer.objects.get(user=request.user)
+            if subscription.subscription_type == 'Free':
+                # user is authorised to create 1 restorant
+                if Restorant.objects.filter(created_by=request.user).count() >= 1:
+                    return Response({"error": "You have already created a restorant"}, status=status.HTTP_403_FORBIDDEN)
+            elif subscription.subscription_type == 'Premium':
+                # user is authorised to create 5 restorant
+                if Restorant.objects.filter(created_by=request.user).count() >= 5:
+                    return Response({"error": "You have already created 5 restorants"}, status=status.HTTP_403_FORBIDDEN)
+            elif subscription.subscription_type == 'Enterprise':
+                # user is authorised to create unlimited restorant
+                pass
             data = request.data
             data['created_by'] = request.user.id
             serializer = self.get_serializer(data=data)
@@ -555,6 +644,7 @@ class ItemViewSet(viewsets.ModelViewSet):
 class OrderViewSet(viewsets.ModelViewSet):
     queryset = Order.objects.all()
     serializer_class = OrderSerializer
+    pagination_class = CustomPagination
 
     def get_queryset(self):
         user = self.request.user
@@ -562,7 +652,7 @@ class OrderViewSet(viewsets.ModelViewSet):
         if user.is_authenticated and restorant_id:
             restorant = Restorant.objects.get(id=restorant_id)
             if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
-                return Order.objects.filter(table__restorant=restorant_id, status=False)
+                return Order.objects.filter(table__restorant=restorant_id, status=False)[::-1]
         # else return zero order
         return Order.objects.none()
 
@@ -609,7 +699,7 @@ class OrderCreateView(APIView):
     def post(self, request, format=None):
         data = request.data
         ip_address = request.META.get('REMOTE_ADDR')
-
+        print(data, 'data')
         if not data['items']:
             return Response({'error': 'No items in order'}, status=status.HTTP_400_BAD_REQUEST)
         try:
@@ -617,25 +707,40 @@ class OrderCreateView(APIView):
                 table = Table.objects.get(id=data['table'])
                 if BlockIP.objects.filter(ip=ip_address, restorant=table.restorant.id).exists():
                     return Response({'error': 'Invalid data from user.'}, status=status.HTTP_403_FORBIDDEN)
-                order_number = Order.objects.filter(
-                    table=table, status=False).count()
-                order = Order.objects.create(
-                    table=table, order_number=order_number + 1, order_ip_address=ip_address)
+                if Order.objects.filter(table=table, status=False, order_key=data['order_key']).exists():
+                    # add new items to existing order
+                    order = Order.objects.get(
+                        table=table, status=False, order_key=data['order_key'])
+                    for item_data in data['items']:
+                        item = Item.objects.get(id=item_data['item'])
+                        OrderDetail.objects.create(
+                            order=order,
+                            item=item,
+                            quantity=item_data['quantity'],
+                            price=item.price,
+                            total=item.price * item_data['quantity']
+                        )
+                else:
+                    # create new order
+                    order_number = Order.objects.filter(
+                        table=table, status=False).count()
+                    order = Order.objects.create(
+                        table=table, order_number=order_number + 1, order_ip_address=ip_address, order_key=data['order_key'])
 
-                for item_data in data['items']:
-                    item = Item.objects.get(id=item_data['item'])
-                    OrderDetail.objects.create(
-                        order=order,
-                        item=item,
-                        quantity=item_data['quantity'],
-                        price=item.price,
-                        total=item.price * item_data['quantity'],
-                    )
+                    for item_data in data['items']:
+                        item = Item.objects.get(id=item_data['item'])
+                        OrderDetail.objects.create(
+                            order=order,
+                            item=item,
+                            quantity=item_data['quantity'],
+                            price=item.price,
+                            total=item.price * item_data['quantity'],
+                        )
 
                 # Send message to WebSocket group
                 channel_layer = get_channel_layer()
                 async_to_sync(channel_layer.group_send)(
-                    'orders_group',
+                    'orders_group_' + str(table.restorant.id),
                     {
                         'type': 'order_update',
                         'message': 'New order created'
@@ -782,12 +887,52 @@ class DataAnalysis(APIView):
         if restorant_id:
             restorant = Restorant.objects.get(id=restorant_id)
             if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                # Get today's date
+                today = timezone.now()
+
+                # Calculate the first day of the current month
+                first_day_of_current_month = today.replace(day=1)
+
+                # Calculate the last day of the previous month (which is one day before the first day of the current month)
+                last_day_of_previous_month = first_day_of_current_month - \
+                    timedelta(days=1)
+
+                # Calculate the first day of the previous month
+                first_day_of_previous_month = last_day_of_previous_month.replace(
+                    day=1)
+
+                # Filter OrderDetail objects to count items sold in the current month
                 items_sold = OrderDetail.objects.filter(
-                    order__table__restorant=restorant).aggregate(total=Sum('quantity'))['total']
+                    order__table__restorant=restorant,
+                    created_time__date__gte=first_day_of_current_month,
+                ).aggregate(total=Sum('quantity'))['total'] or 0
+
+                # Filter OrderDetail objects to count items sold in the previous month
+                items_sold_previous_month = OrderDetail.objects.filter(
+                    order__table__restorant=restorant,
+                    created_time__date__gte=first_day_of_previous_month,
+                    created_time__date__lte=last_day_of_previous_month,
+                ).aggregate(total=Sum('quantity'))['total'] or 0
+
+                # persentage of items sold in the current month compared to the previous month
+                if items_sold_previous_month == 0:
+                    items_sold_previous_month = 1
+                items_sold_percentage = (
+                    (items_sold - items_sold_previous_month) / items_sold_previous_month) * 100
 
                 # How much money has each item made
-                item_revenue = OrderDetail.objects.filter(order__table__restorant=restorant).values(
-                    'item__name').annotate(revenue=Sum('total'))
+                # item_revenue = OrderDetail.objects.filter(order__table__restorant=restorant).values(
+                #     'item__name').annotate(revenue=Sum('total'))
+                item_revenue_current_month = OrderDetail.objects.filter(
+                    order__table__restorant=restorant,
+                    created_time__date__gte=first_day_of_current_month,
+                ).values('item__name').annotate(revenue=Sum('total'))
+
+                item_revenue_previous_month = OrderDetail.objects.filter(
+                    order__table__restorant=restorant,
+                    created_time__date__gte=first_day_of_previous_month,
+                    created_time__date__lte=last_day_of_previous_month,
+                ).values('item__name').annotate(revenue=Sum('total'))
 
                 # Which category has received the highest amount of orders and money
                 category_data = OrderDetail.objects.filter(order__table__restorant=restorant).values('item__category__name').annotate(
@@ -795,11 +940,23 @@ class DataAnalysis(APIView):
 
                 # Convert 'created_time' to Unix timestamp (seconds since 1970-01-01)
                 item_creation_time = OrderDetail.objects.filter(order__table__restorant=restorant).annotate(
-                    created_time_unix=Cast(ExpressionWrapper(
-                        F('created_time'), output_field=fields.DateTimeField()), output_field=fields.FloatField())
-                ).values('item__name').annotate(avg_creation_time=Avg('created_time_unix'))
+                    created_time_unix=Cast(
+                        ExpressionWrapper(
+                            F('created_time'), output_field=fields.DateTimeField()
+                        ), output_field=fields.FloatField()
+                    )
+                ).values('item__name').annotate(
+                    avg_creation_time=Avg('created_time_unix')
+                ).annotate(
+                    avg_creation_time=Case(
+                        When(avg_creation_time__lt=60, then=Value(60)),
+                        When(avg_creation_time__gt=3600, then=Value(3600)),
+                        default=F('avg_creation_time'),
+                        output_field=FloatField()
+                    )
+                )
 
-                # Convert 'completed_time' to Unix timestamp
+                # Convert 'completed_time' to Unix timestamp (seconds since 1970-01-01)
                 avg_order_completion_time = Order.objects.filter(
                     table__restorant=restorant).annotate(
                     completed_time_unix=Cast(ExpressionWrapper(
@@ -814,7 +971,10 @@ class DataAnalysis(APIView):
 
                 data = {
                     'items_sold': items_sold,
-                    'item_revenue': list(item_revenue),
+                    'items_sold_previous_month': items_sold_previous_month,
+                    'items_sold_percentage': items_sold_percentage,
+                    'item_revenue': list(item_revenue_current_month),
+                    'item_revenue_previous_month': list(item_revenue_previous_month),
                     'category_data': list(category_data),
                     'item_creation_time': list(item_creation_time),
                     'avg_order_completion_time': avg_order_completion_time,
@@ -822,6 +982,98 @@ class DataAnalysis(APIView):
                 }
                 return Response(data, status=status.HTTP_200_OK)
         return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class DataAnalysisForMonth(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        month = request.query_params.get('month')
+        # month string to month number
+        month = datetime.strptime(month, '%B').month
+        year = request.query_params.get('year')
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        print(month, year)
+
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                # Calculate the first day of the current month
+                first_day_of_current_month = datetime.strptime(
+                    f'{year}-{month}-01', '%Y-%m-%d')
+
+                # Filter OrderDetail objects to count items sold in the current month
+                items_sold = OrderDetail.objects.filter(
+                    order__table__restorant=restorant,
+                    created_time__date__gte=first_day_of_current_month,
+                    created_time__date__lte=first_day_of_current_month +
+                    timedelta(days=30),
+                ).aggregate(total=Sum('quantity'))['total'] or 0
+
+                # How much money has each item made
+                # item_revenue = OrderDetail.objects.filter(order__table__restorant=restorant).values(
+                #     'item__name').annotate(revenue=Sum('total'))
+                item_revenue_current_month = OrderDetail.objects.filter(
+                    order__table__restorant=restorant,
+                    created_time__date__gte=first_day_of_current_month,
+                    created_time__date__lte=first_day_of_current_month +
+                    timedelta(days=30),
+                ).values('item__name').annotate(revenue=Sum('total')) or []
+
+                # Which category has received the highest amount of orders and money
+                category_data = OrderDetail.objects.filter(order__table__restorant=restorant).values('item__category__name').annotate(
+                    total_orders=Sum('quantity'), total_revenue=Sum('total')).order_by('-total_orders', '-total_revenue')
+
+                # Convert 'created_time' to Unix timestamp (seconds since 1970-01-01) and calculate average creation month
+                item_creation_time = OrderDetail.objects.filter(order__table__restorant=restorant).annotate(
+                    created_time_unix=Cast(
+                        ExpressionWrapper(
+                            F('created_time'), output_field=fields.DateTimeField()
+                        ), output_field=fields.FloatField()
+                    )
+                ).values('item__name').annotate(
+                    avg_creation_time=Avg('created_time_unix')
+                ).annotate(
+                    avg_creation_time=Case(
+                        When(avg_creation_time__lt=60, then=Value(60)),
+                        When(avg_creation_time__gt=3600, then=Value(3600)),
+                        default=F('avg_creation_time'),
+                        output_field=FloatField()
+                    )
+                )
+
+                # avg order completion time on given month
+                avg_order_completion_time = Order.objects.filter(
+                    table__restorant=restorant,
+                    completed_time__date__gte=first_day_of_current_month,
+                    completed_time__date__lte=first_day_of_current_month +
+                    timedelta(days=30),
+                ).annotate(
+                    completed_time_unix=Cast(ExpressionWrapper(
+                        F('completed_time'), output_field=fields.DateTimeField()), output_field=fields.FloatField())
+                ).aggregate(avg_completion_time=Avg('completed_time_unix'))
+
+                order_time = Order.objects.filter(
+                    table__restorant=restorant,
+                    order_time__date__gte=first_day_of_current_month,
+                    order_time__date__lte=first_day_of_current_month +
+                    timedelta(days=30),
+                ).annotate(
+                    order_hour=ExtractHour('order_time')
+                ).values('order_hour').annotate(total_orders=Count('id'))
+
+                # time of order according hour of day
+
+                data = {
+                    'items_sold': items_sold,
+                    'item_revenue': list(item_revenue_current_month),
+                    'category_data': list(category_data),
+                    'item_creation_time': list(item_creation_time),
+                    'avg_order_completion_time': avg_order_completion_time,
+                    'order_time': list(order_time),
+                }
+                return Response(data, status=status.HTTP_200_OK)
 
 
 class OrderHistory(APIView):
@@ -852,10 +1104,14 @@ class ProductViewSet(APIView):
     def get(self, request):
         user = request.user
         restorant_id = request.query_params.get('restorant_id')
+        page = request.query_params.get('page')
+        if type(page) == str:
+            page = int(page)
         if restorant_id:
             restorant = Restorant.objects.get(id=restorant_id)
             if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
-                products = Product.objects.filter(restorant=restorant_id)
+                products = Product.objects.filter(restorant=restorant_id)[
+                    page * 30 - 30:page * 30]
                 serializer = ProductSerializer(products, many=True)
                 return Response(serializer.data, status=status.HTTP_200_OK)
         return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
@@ -907,11 +1163,14 @@ class InventoryViewSet(APIView):
     def get(self, request):
         user = request.user
         restorant_id = request.query_params.get('restorant_id')
+        page = request.query_params.get('page')
+        if type(page) == str:
+            page = int(page)
         if restorant_id:
             restorant = Restorant.objects.get(id=restorant_id)
             if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
                 products = Inventory.objects.filter(
-                    restorant=restorant_id).values('product__name').annotate(total_quantity=Sum('quantity'))
+                    restorant=restorant_id).values('product__name').annotate(total_quantity=Sum('quantity'))[page * 3 - 3:page * 3]
                 return Response(list(products), status=status.HTTP_200_OK)
         return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -956,13 +1215,31 @@ class HostelViewSet(APIView):
         # return Response(serializer.data)
 
     def post(self, request):
-        user = request.user
-        data = request.data.copy()
-        data['created_by'] = user.id
-        serializer = HostelSerializer(data=data)
-        serializer.is_valid(raise_exception=True)
-        serializer.save()
-        return Response(serializer.data, status=status.HTTP_201_CREATED)
+        try:
+            if 'name' not in request.data:
+                return Response({"error": "Hostel name is required"}, status=status.HTTP_400_BAD_REQUEST)
+            elif not SubscriptionBuyer.objects.filter(user=request.user).exists():
+                return Response({"error": "You need to buy a subscription to create hostel"}, status=status.HTTP_403_FORBIDDEN)
+            subscription = SubscriptionBuyer.objects.get(user=request.user)
+            if subscription.type == 'free' and Hostel.objects.filter(created_by=request.user).count() >= 1:
+                return Response({"error": "You need to buy a subscription to create more hostels"}, status=status.HTTP_403_FORBIDDEN)
+            elif subscription.type == 'premium' and Hostel.objects.filter(created_by=request.user).count() >= 5:
+                return Response({"error": "You have reached the limit of hostels you can create"}, status=status.HTTP_403_FORBIDDEN)
+            elif subscription.type == 'enterprise':
+                pass
+            user = request.user
+            data = request.data.copy()
+            data['created_by'] = user.id
+            serializer = HostelSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        except Exception as e:
+            if 'name' in str(e):
+                return Response({"error": "Hostel name already exists"}, status=status.HTTP_409_CONFLICT)
+            else:
+                print(e)
+                return Response({"error": 'Something went wrong!'}, status=status.HTTP_400_BAD_REQUEST)
 
     def delete(self, request, *args, **kwargs):
         data = request.data
@@ -1489,3 +1766,477 @@ class BlockIp(APIView):
                 return Response({"error": "You are not authorized to unblock this IP"}, status=status.HTTP_403_FORBIDDEN)
         else:
             return Response({"error": "Invalid block for"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+# fack data
+def create_restorants(n):
+    restorants = []
+    for _ in range(n):
+        name = fake.company()
+        address = fake.address()
+        phone = fake.phone_number()
+        email = fake.email()
+        website = fake.url()
+        created_by = User.objects.first()
+        restorants.append(Restorant(name=name, address=address, phone=phone,
+                                    email=email, website=website, created_by=created_by))
+    Restorant.objects.bulk_create(restorants)
+
+
+def create_categories(n):
+    categories = []
+    for _ in range(n):
+        name = fake.word()
+        description = fake.text()
+        restorant = random.choice(Restorant.objects.all())
+        active = True
+        categories.append(
+            Category(name=name, description=description, restorant=restorant, active=active))
+    Category.objects.bulk_create(categories)
+
+
+def create_items(n):
+    items = []
+    for _ in range(n):
+        category = random.choice(Category.objects.all())
+        name = fake.word()
+        description = fake.text()
+        price = round(random.uniform(5.0, 50.0), 2)
+        items.append(Item(category=category, name=name,
+                     description=description, price=price))
+    Item.objects.bulk_create(items)
+
+
+def create_orders(n):
+    orders = []
+    for _ in range(n):
+        table = random.choice(Table.objects.all())
+        status = True
+        # completed time is random time between 10 minutes and 1.5 hours from now
+        completed_time = timezone.now() + timedelta(
+            minutes=random.randint(10, 90))
+        order_number = random.randint(100, 999)
+        orders.append(Order(table=table, order_number=order_number,
+                            status=status, completed_time=completed_time))
+    Order.objects.bulk_create(orders)
+
+
+def Create_orders_details(n):
+    orders_details = []
+    for _ in range(n):
+        order = random.choice(Order.objects.all())
+        # item shoul belong to the same restorant as the order
+        item = random.choice(Item.objects.filter(
+            category__restorant=order.table.restorant))
+        is_completed = random.choice([True, False])
+        if is_completed:
+            # random time between 5 minutes and 1 hour from now
+            completed_time = timezone.now() + timedelta(
+                minutes=random.randint(5, 60))
+        quantity = random.randint(1, 10)
+        price = item.price
+        total = quantity * price
+        orders_details.append(OrderDetail(
+            order=order, item=item, quantity=quantity, price=price, total=total, is_completed=is_completed))
+    OrderDetail.objects.bulk_create(orders_details)
+
+
+def Run(self):
+    n = 10
+    # create_restorants(n)
+    # create_categories(50)
+    # create_items(100)
+    # create_orders(100)
+    # Create_orders_details(200)
+    return Response({"message": "Nothing to create here go to line 1631"}, status=status.HTTP_200_OK)
+
+
+# service views ==================================================
+
+
+class ServiceShopViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_shops = ServiceShop.objects.filter(created_by=user)
+        serializer = ServiceShopSerializer(service_shops, many=True)
+        return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        data['created_by'] = user.id
+        serializer = ServiceShopSerializer(data=data)
+        serializer.is_valid(raise_exception=True)
+        serializer.save()
+        return Response(serializer.data, status=status.HTTP_201_CREATED)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop_id'])
+        if service_shop.created_by == request.user:
+            service_shop.delete()
+            return Response({"message": "Service shop deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this service shop"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop_id'])
+        data['created_by'] = request.user.id
+        if service_shop.created_by == request.user:
+            serializer = ServiceShopSerializer(service_shop, data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response({"message": "Service shop updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this service shop"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ServiceTableViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_shop_id = request.query_params.get('service_shop_id')
+        if service_shop_id:
+            service_shop = ServiceShop.objects.get(id=service_shop_id)
+            if service_shop.created_by == user or user in service_shop.staffs.all():
+                service_tables = ServiceTable.objects.filter(
+                    service_shop=service_shop_id)
+                serializer = ServiceTableSerializer(service_tables, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop'])
+        if service_shop.created_by == user:
+            serializer = ServiceTableSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add service table"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        service_table = ServiceTable.objects.get(id=data['service_table_id'])
+        service_shop = service_table.service_shop
+        if service_shop.created_by == request.user:
+            service_table.delete()
+            return Response({"message": "Service table deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this service table"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        service_table = ServiceTable.objects.get(id=data['service_table_id'])
+        service_shop = service_table.service_shop
+        if service_shop.created_by == request.user:
+            service_table.capacity = data['capacity']
+            service_table.save()
+            return Response({"message": "Service table capacity updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this service table"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ServiceViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        if user.is_authenticated:
+            service_table_id = request.query_params.get('service_table_id')
+            print(service_table_id, 'service_table_id')
+            if service_table_id:
+                service_table = ServiceTable.objects.get(id=service_table_id)
+                if service_table.service_shop.created_by == user or user in service_table.service_shop.staffs.all():
+                    services = Service.objects.filter(
+                        service_table=service_table_id)
+                    serializer = ServiceSerializer(services, many=True)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+            return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            service_table_id = request.query_params.get('service_table_id')
+            if service_table_id:
+                services = Service.objects.filter(
+                    service_table=service_table_id, active=True)
+                serializer = ServiceSerializer(services, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        service_table = ServiceTable.objects.get(id=data['service_table'])
+        if service_table.service_shop.created_by == user:
+            serializer = ServiceSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add service"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        service = Service.objects.get(id=data['service_id'])
+        service_table = service.service_table
+        if service_table.service_shop.created_by == request.user:
+            service.delete()
+            return Response({"message": "Service deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this service"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        service = Service.objects.get(id=data['service_id'])
+        service_table = service.service_table
+        if service_table.service_shop.created_by == request.user:
+            service.price = data['price']
+            service.save()
+            return Response({"message": "Service price updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this service"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ServiceOrderViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_shop_id = request.query_params.get('service_shop_id')
+        if service_shop_id:
+            service_shop = ServiceShop.objects.get(id=service_shop_id)
+            if service_shop.created_by == user or user in service_shop.staffs.all():
+                service_orders = ServiceOrder.objects.filter(
+                    table__service_shop=service_shop_id)
+                serializer = ServiceOrderSerializer(service_orders, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        table = ServiceTable.objects.get(id=data['table'])
+        if table.service_shop.created_by == user:
+            order_number = random.randint(100, 999)
+            order_key = random.randint(1000, 9999)
+            order_ip_address = request.META.get('REMOTE_ADDR')
+            serializer = ServiceOrderSerializer(data={
+                'table': table.id,
+                'order_number': order_number,
+                'order_key': order_key,
+                'order_ip_address': order_ip_address,
+                'order_by': user.id
+            })
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add service order"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        service_order = ServiceOrder.objects.get(id=data['service_order_id'])
+        service_shop = service_order.table.service_shop
+        if service_shop.created_by == request.user:
+            service_order.delete()
+            return Response({"message": "Service order deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this service order"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        service_order = ServiceOrder.objects.get(id=data['service_order_id'])
+        service_shop = service_order.table.service_shop
+        if service_shop.created_by == request.user:
+            service_order.status = data['status']
+            service_order.save()
+            return Response({"message": "Service order status updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this service order"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ServiceOrderDetailView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_order_id = request.query_params.get('service_order_id')
+        if service_order_id:
+            service_order = ServiceOrder.objects.get(id=service_order_id)
+            if service_order.table.service_shop.created_by == user or user in service_order.table.service_shop.staffs.all():
+                service_order_details = ServiceOrderDetail.objects.filter(
+                    order=service_order_id)
+                serializer = ServiceOrderDetailSerializer(
+                    service_order_details, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        order = ServiceOrder.objects.get(id=data['order'])
+        if order.table.service_shop.created_by == user:
+            service = Service.objects.get(id=data['service'])
+            price = service.price
+            total = data['quantity'] * price
+            serializer = ServiceOrderDetailSerializer(data={
+                'order': order.id,
+                'service': service.id,
+                'quantity': data['quantity'],
+                'price': price,
+                'total': total
+            })
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add service order detail"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        service_order_detail = ServiceOrderDetail.objects.get(
+            id=data['service_order_detail_id'])
+        service_shop = service_order_detail.order.table.service_shop
+        if service_shop.created_by == request.user:
+            service_order_detail.delete()
+            return Response({"message": "Service order detail deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this service order detail"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        service_order_detail = ServiceOrderDetail.objects.get(
+            id=data['service_order_detail_id'])
+        service_shop = service_order_detail.order.table.service_shop
+        if service_shop.created_by == request.user:
+            service_order_detail.is_completed = data['is_completed']
+            service_order_detail.save()
+            return Response({"message": "Service order detail status updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this service order detail"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ShopAnouncementViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_shop_id = request.query_params.get('service_shop_id')
+        if service_shop_id:
+            service_shop = ServiceShop.objects.get(id=service_shop_id)
+            if service_shop.created_by == user or user in service_shop.staffs.all():
+                shop_anouncements = ShopAnouncement.objects.filter(
+                    service_shop=service_shop_id)
+                serializer = ShopAnouncementSerializer(
+                    shop_anouncements, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop'])
+        if service_shop.created_by == user:
+            serializer = ShopAnouncementSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add shop anouncement"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        shop_anouncement = ShopAnouncement.objects.get(
+            id=data['shop_anouncement_id'])
+        service_shop = shop_anouncement.service_shop
+        if service_shop.created_by == request.user:
+            shop_anouncement.delete()
+            return Response({"message": "Shop anouncement deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this shop anouncement"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ShopReviewViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_shop_id = request.query_params.get('service_shop_id')
+        if service_shop_id:
+            service_shop = ServiceShop.objects.get(id=service_shop_id)
+            if service_shop.created_by == user or user in service_shop.staffs.all():
+                shop_reviews = ShopReview.objects.filter(
+                    service_shop=service_shop_id)
+                serializer = ShopReviewSerializer(shop_reviews, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop'])
+        if service_shop.created_by == user:
+            serializer = ShopReviewSerializer(data=data)
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add shop review"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request, *args, **kwargs):
+        data = request.data
+        shop_review = ShopReview.objects.get(id=data['shop_review_id'])
+        service_shop = shop_review.service_shop
+        if service_shop.created_by == request.user:
+            shop_review.delete()
+            return Response({"message": "Shop review deleted"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to delete this shop review"}, status=status.HTTP_403_FORBIDDEN)
+
+
+# activate Service
+
+class ActivateService(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_id = request.query_params.get('service_id')
+        if service_id:
+            service = Service.objects.get(id=service_id)
+            if service.service_table.service_shop.created_by == user:
+                service.active = not service.active
+                service.save()
+                return Response({"message": "Service activated"}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to activate this service"}, status=status.HTTP_403_FORBIDDEN)
+        return Response({"error": "Service id is required"}, status=status.HTTP_400_BAD_REQUEST)
+
+
+class TimeInqueCalculate(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        table_id = request.query_params.get('table_id')
+        if table_id:
+            table = Table.objects.get(id=table_id)
+            if table.restorant.created_by == user or user in table.restorant.staffs.all():
+                table_orders = ServiceOrder.objects.filter(table=table_id, status=False)
+                min_time = 0
+                max_time = 0
+                for order in table_orders:
+                    servecese_in_order = ServiceOrderDetail.objects.filter(order=order.id, is_completed=False)
+                    for service in servecese_in_order:
+                        min_time += service.service.aprox_time_min
+                        max_time += service.service.aprox_time_max
+
+                return Response({"min_time": min_time, "max_time": max_time}, status=status.HTTP_200_OK)
+            else:
+                return Response({"error": "You are not authorized to calculate time for this table"}, status=status.HTTP_403_FORBIDDEN)
+        return Response({"error": "Table id is required"}, status=status.HTTP_400_BAD_REQUEST)
+    

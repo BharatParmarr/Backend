@@ -24,7 +24,7 @@ CORS_ALLOW_METHODS = [
 ]
 
 ALLOWED_HOSTS = ['*', "http://localhost:5173",
-                 "http://192.168.71.82:5173", "http://192.168.181.82", '127.0.0.1']
+                 "http://192.168.71.82:5173", "http://192.168.218.82", '127.0.0.1']
 
 AUTH_USER_MODEL = 'app.User'
 
@@ -163,7 +163,7 @@ DEFAULT_AUTO_FIELD = 'django.db.models.BigAutoField'
 # rest framework
 REST_FRAMEWORK = {
     'DEFAULT_PAGINATION_CLASS': 'rest_framework.pagination.PageNumberPagination',
-    'PAGE_SIZE': 10,
+    'PAGE_SIZE': 5,
     'DEFAULT_AUTHENTICATION_CLASSES': [
         'rest_framework.authentication.TokenAuthentication',
     ],

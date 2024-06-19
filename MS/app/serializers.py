@@ -1,6 +1,5 @@
 from rest_framework import serializers
-
-from .models import BlockIP, Meal, MealItem, MealOrder, Notice, Payment, Product, Restorant, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student, User
+from .models import BlockIP, Meal, MealItem, MealOrder, Notice, Payment, Product, Restorant, Service, ServiceOrder, ServiceOrderDetail, ServiceShop, ServiceTable, ShopAnouncement, ShopReview, Subscription_code, SubscriptionBuyer, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student, User
 
 
 class AuthUserSerializer(serializers.ModelSerializer):
@@ -12,10 +11,19 @@ class AuthUserSerializer(serializers.ModelSerializer):
 class UserSerializer(serializers.ModelSerializer):
     image = serializers.ImageField(
         max_length=None, use_url=True, required=False)
+    subscription = serializers.SerializerMethodField()
 
     class Meta:
         model = User
-        fields = ['username', 'email', 'image', 'phone', 'address']
+        fields = ['username', 'email', 'image',
+                  'phone', 'address', 'subscription', 'id']
+
+    def get_subscription(self, obj):
+        Subscription = SubscriptionBuyer.objects.filter(user=obj.id)
+        if Subscription:
+            return True
+        else:
+            return False
 
 
 class RestorantSerializer(serializers.ModelSerializer):
@@ -167,4 +175,70 @@ class BlockIpSerializer(serializers.Serializer):
 
     class Meta:
         model = BlockIP
+        fields = '__all__'
+
+
+class Subscription_codeSerializer(serializers.Serializer):
+
+    class Meta:
+        model = Subscription_code
+        fields = '__all__'
+
+
+class SubscriptionBuyerSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = SubscriptionBuyer
+        fields = ['user', 'created_time',
+                  'subscription_time', 'id', 'type', 'subscription_start_time']
+
+
+# service serializers ===========
+
+class ServiceShopSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ServiceShop
+        fields = '__all__'
+
+
+class ServiceTableSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ServiceTable
+        fields = '__all__'
+
+
+class ServiceSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = Service
+        fields = '__all__'
+
+
+class ServiceOrderSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ServiceOrder
+        fields = '__all__'
+
+
+class ServiceOrderDetailSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ServiceOrderDetail
+        fields = '__all__'
+
+
+class ShopAnouncementSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ShopAnouncement
+        fields = '__all__'
+
+
+class ShopReviewSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = ShopReview
         fields = '__all__'
