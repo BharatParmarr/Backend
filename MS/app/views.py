@@ -549,12 +549,12 @@ class TableViewSet(viewsets.ModelViewSet):
     queryset = Table.objects.all()
     serializer_class = TableSerializer
 
-    def get_queryset(self, request):
+    def get_queryset(self):
         try:
-            if request.user.is_authenticated:
+            if self.request.user.is_authenticated:
                 user = self.request.user
                 restorant_id = self.request.query_params.get('restorant_id')
-                if user.is_authenticated and restorant_id:
+                if restorant_id:
                     restorant = Restorant.objects.get(id=restorant_id)
                     if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
                         return Table.objects.filter(restorant=restorant_id)
@@ -564,7 +564,9 @@ class TableViewSet(viewsets.ModelViewSet):
                 restorant_id = self.request.query_params.get('restorant_id')
                 if restorant_id:
                     restorant = Restorant.objects.get(id=restorant_id)
-                    return Table.objects.filter(restorant=restorant_id, active=True)
+                    print(Table.objects.filter(
+                        restorant=restorant_id))
+                    return Table.objects.filter(restorant=restorant_id)
             return Table.objects.none()
         except Exception as e:
             return Table.objects.none()
