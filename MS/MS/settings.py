@@ -24,7 +24,8 @@ CORS_ALLOW_METHODS = [
 ]
 
 ALLOWED_HOSTS = ['*', "http://localhost:5173",
-                 "http://192.168.71.82:5173", "http://192.168.218.82", '127.0.0.1']
+                 "http://192.168.71.82:5173", "http://192.168.218.82", '127.0.0.1',
+                 'https://rjms-kjny.vercel.app', 'https://rjms-kjny.vercel.app:5173',]
 
 AUTH_USER_MODEL = 'app.User'
 
