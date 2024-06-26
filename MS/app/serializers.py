@@ -1,5 +1,5 @@
 from rest_framework import serializers
-from .models import BlockIP, Meal, MealItem, MealOrder, Notice, Payment, Product, Restorant, Service, ServiceOrder, ServiceOrderDetail, ServiceShop, ServiceTable, ShopAnouncement, ShopReview, Subscription_code, SubscriptionBuyer, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student, User
+from .models import BlockIP, Meal, MealItem, MealOrder, Notice, Payment, Product, Restorant, RestorantOpenClose, Service, ServiceOrder, ServiceOrderDetail, ServiceShop, ServiceTable, ShopAnouncement, ShopReview, Subscription_code, SubscriptionBuyer, Table, Category, Item, Order, OrderDetail, Hostel, Room, Student, User
 
 
 class AuthUserSerializer(serializers.ModelSerializer):
@@ -33,6 +33,32 @@ class RestorantSerializer(serializers.ModelSerializer):
     class Meta:
         model = Restorant
         fields = '__all__'
+
+
+class RestorantSerializer_unauthorise(serializers.ModelSerializer):
+    logo = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = Restorant
+        fields = ['id', 'name', 'logo', 'address', 'open_time',
+                  'close_time', 'phone', 'email', 'website']
+
+
+class RestorantOpenCloseSerializer(serializers.ModelSerializer):
+
+    class Meta:
+        model = RestorantOpenClose
+        fields = '__all__'
+
+
+class RestorantSearchSerializer(serializers.ModelSerializer):
+    logo = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = Restorant
+        fields = ['id', 'name', 'logo', 'address', 'open_time', 'close_time']
 
 
 class TableSerializer(serializers.ModelSerializer):
@@ -101,6 +127,15 @@ class HostelSerializer(serializers.ModelSerializer):
     class Meta:
         model = Hostel
         fields = '__all__'
+
+
+class HostelSearchSerializer(serializers.ModelSerializer):
+    logo = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = Hostel
+        fields = ['id', 'name', 'logo', 'address']
 
 
 class RoomSerializer(serializers.ModelSerializer):
@@ -196,10 +231,22 @@ class SubscriptionBuyerSerializer(serializers.ModelSerializer):
 # service serializers ===========
 
 class ServiceShopSerializer(serializers.ModelSerializer):
+    logo = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
 
     class Meta:
         model = ServiceShop
         fields = '__all__'
+
+
+class ServiceShopSearchSerializer(serializers.ModelSerializer):
+    logo = serializers.ImageField(
+        max_length=None, use_url=True, required=False)
+
+    class Meta:
+        model = ServiceShop
+        fields = ['id', 'name', 'address',
+                  'open_time', 'close_time', 'logo']
 
 
 class ServiceTableSerializer(serializers.ModelSerializer):
@@ -224,10 +271,12 @@ class ServiceOrderSerializer(serializers.ModelSerializer):
 
 
 class ServiceOrderDetailSerializer(serializers.ModelSerializer):
+    item_name = serializers.CharField(source='service.name', read_only=True)
 
     class Meta:
         model = ServiceOrderDetail
-        fields = '__all__'
+        fields = ['order', 'service', 'quantity', 'price', 'total',
+                  'id', 'is_completed', 'completed_time', 'created_time', 'item_name']
 
 
 class ShopAnouncementSerializer(serializers.ModelSerializer):
@@ -242,3 +291,22 @@ class ShopReviewSerializer(serializers.ModelSerializer):
     class Meta:
         model = ShopReview
         fields = '__all__'
+
+
+class ServiceOrdersSerializer(serializers.ModelSerializer):
+    order_details = ServiceOrderDetailSerializer(
+        source='serviceorderdetail_set', many=True)
+    table_name = serializers.CharField(source='table.name', read_only=True)
+    table_id = serializers.IntegerField(source='table.id', read_only=True)
+
+    class Meta:
+        model = ServiceOrder
+        fields = ['table', 'status', 'order_time',
+                  'order_number', 'order_details', 'id', 'table_name', 'table_id']
+
+    def create(self, validated_data):
+        order_details_data = validated_data.pop('order_details')
+        order = ServiceOrder.objects.create(**validated_data)
+        for order_detail_data in order_details_data:
+            ServiceOrderDetail.objects.create(order=order, **order_detail_data)
+        return order

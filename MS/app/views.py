@@ -5,7 +5,7 @@ from django.shortcuts import render
 from rest_framework import viewsets
 from django.db.models import Q
 from .models import BlockIP, Hostel, Inventory, Meal, MealItem, Notice, Payment, Product, Profile, Restorant, Room, Service, ServiceOrder, ServiceOrderDetail, ServiceShop, ServiceTable, ShopAnouncement, ShopReview, Student, Subscription_code, SubscriptionBuyer, Table, Category, Item, Order, OrderDetail
-from .serializers import AuthUserSerializer, BlockIpSerializer, HostelSerializer, MealItemSerializer, MealOrderSerializer, MealSerializer, NoticeSerializer, PaymentSerializer, ProductSerializer, RestorantSerializer, RoomSerializer, ServiceOrderDetailSerializer, ServiceOrderSerializer, ServiceSerializer, ServiceShopSerializer, ServiceTableSerializer, ShopAnouncementSerializer, ShopReviewSerializer, StudentSerializer, Subscription_codeSerializer, SubscriptionBuyerSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer, UserSerializer
+from .serializers import AuthUserSerializer, BlockIpSerializer, HostelSearchSerializer, HostelSerializer, MealItemSerializer, MealOrderSerializer, MealSerializer, NoticeSerializer, PaymentSerializer, ProductSerializer, RestorantOpenCloseSerializer, RestorantSearchSerializer, RestorantSerializer, RestorantSerializer_unauthorise, RoomSerializer, ServiceOrderDetailSerializer, ServiceOrderSerializer, ServiceOrdersSerializer, ServiceSerializer, ServiceShopSearchSerializer, ServiceShopSerializer, ServiceTableSerializer, ShopAnouncementSerializer, ShopReviewSerializer, StudentSerializer, Subscription_codeSerializer, SubscriptionBuyerSerializer, TableSerializer, CategorySerializer, ItemSerializer, OrderSerializer, OrderDetailSerializer, UserSerializer
 
 # user
 from django.contrib.auth import get_user_model
@@ -42,6 +42,9 @@ from rest_framework.exceptions import AuthenticationFailed
 from faker import Faker
 
 from .pagination import CustomPagination
+
+# rate limit
+from rest_framework.throttling import UserRateThrottle, AnonRateThrottle
 
 fake = Faker()
 
@@ -388,16 +391,25 @@ class RestorantViewSet(viewsets.ModelViewSet):
 
 
 class RestorantDetails(APIView):
-    authentication_classes = [TokenAuthentication]
+    # authentication_classes = [TokenAuthentication]
+    # request rate limit
+    throttle_classes = [UserRateThrottle, AnonRateThrottle]
 
     def get(self, request):
-        user = request.user
-        restorant_id = request.query_params.get('restorant_id')
-        if restorant_id:
-            restorant = Restorant.objects.get(id=restorant_id)
-            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
-                return Response(RestorantSerializer(restorant).data, status=status.HTTP_200_OK)
-        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+        print(request.user.is_authenticated, 'auth')
+        if request.user.is_authenticated:
+            user = request.user
+            restorant_id = request.query_params.get('restorant_id')
+            if restorant_id:
+                restorant = Restorant.objects.get(id=restorant_id)
+                if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                    return Response(RestorantSerializer(restorant).data, status=status.HTTP_200_OK)
+            return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+        else:
+            restorant_id = request.query_params.get('restorant_id')
+            if restorant_id:
+                restorant = Restorant.objects.get(id=restorant_id)
+                return Response(RestorantSerializer_unauthorise(restorant).data, status=status.HTTP_200_OK)
 
     def put(self, request):
         data = request.data
@@ -413,6 +425,55 @@ class RestorantDetails(APIView):
             except Exception as e:
                 if 'name' in str(e):
                     return Response({"error": "Hostel name already exists"}, status=status.HTTP_409_CONFLICT)
+        else:
+            return Response({"error": "You are not authorized to update this restorant"}, status=status.HTTP_403_FORBIDDEN)
+
+
+# class RestorantOpenClose(models.Model):
+#     restorant = models.ForeignKey(Restorant, on_delete=models.CASCADE)
+#     day = models.CharField(max_length=20)
+#     is_open = models.BooleanField(default=True)
+#     open_time = models.TimeField()
+#     close_time = models.TimeField()
+#     status = models.BooleanField(default=True)
+#     updated_time = models.DateTimeField(auto_now=True)
+
+#     def __str__(self):
+#         return self.restorant.name
+
+class RestorantOpenClose(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        restorant_id = request.query_params.get('restorant_id')
+        if restorant_id:
+            restorant = Restorant.objects.get(id=restorant_id)
+            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                return Response(RestorantOpenCloseSerializer(restorant).data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request):
+        data = request.data
+        restorant = Restorant.objects.get(id=data['restorant_id'])
+        if restorant.created_by == request.user or restorant.manager_restorant == request.user:
+            try:
+                if RestorantOpenClose.objects.filter(restorant=restorant, day=data['day']).exists():
+                    open_close = RestorantOpenClose.objects.get(
+                        restorant=restorant, day=data['day'])
+                    serializer = RestorantOpenCloseSerializer(
+                        open_close, data=data, partial=True)
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+                else:
+                    serializer = RestorantOpenCloseSerializer(
+                        restorant, data=data, partial=True)
+                    serializer.is_valid(raise_exception=True)
+                    serializer.save()
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+            except Exception as e:
+                return Response({"error": str(e)}, status=status.HTTP_400_BAD_REQUEST)
         else:
             return Response({"error": "You are not authorized to update this restorant"}, status=status.HTTP_403_FORBIDDEN)
 
@@ -449,6 +510,7 @@ class SetManagerRestorant(APIView):
             return Response({"error": "You are not authorized to set manager for this restorant"}, status=status.HTTP_403_FORBIDDEN)
 
     def delete(self, request):
+        data = request.data
         restorant = request.query_params.get('restorant_id')
         restorant = Restorant.objects.get(id=data['restorant_id'])
         user = request.query_params.get('manager_name')
@@ -487,15 +549,25 @@ class TableViewSet(viewsets.ModelViewSet):
     queryset = Table.objects.all()
     serializer_class = TableSerializer
 
-    def get_queryset(self):
-        user = self.request.user
-        restorant_id = self.request.query_params.get('restorant_id')
-        if user.is_authenticated and restorant_id:
-            restorant = Restorant.objects.get(id=restorant_id)
-            if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
-                return Table.objects.filter(restorant=restorant_id)
-        # else return zero table
-        return Table.objects.none()
+    def get_queryset(self, request):
+        try:
+            if request.user.is_authenticated:
+                user = self.request.user
+                restorant_id = self.request.query_params.get('restorant_id')
+                if user.is_authenticated and restorant_id:
+                    restorant = Restorant.objects.get(id=restorant_id)
+                    if restorant.created_by == user or restorant.manager_restorant == user or user in restorant.staffs.all():
+                        return Table.objects.filter(restorant=restorant_id)
+                # else return zero table
+                return Table.objects.none()
+            else:
+                restorant_id = self.request.query_params.get('restorant_id')
+                if restorant_id:
+                    restorant = Restorant.objects.get(id=restorant_id)
+                    return Table.objects.filter(restorant=restorant_id, active=True)
+            return Table.objects.none()
+        except Exception as e:
+            return Table.objects.none()
 
     def create(self, request, *args, **kwargs):
         data = request.data
@@ -1859,9 +1931,21 @@ class ServiceShopViewSet(APIView):
 
     def get(self, request):
         user = request.user
-        service_shops = ServiceShop.objects.filter(created_by=user)
-        serializer = ServiceShopSerializer(service_shops, many=True)
-        return Response(serializer.data, status=status.HTTP_200_OK)
+        try:
+            ServiceShop_id = request.query_params.get('service_shop_id')
+            if ServiceShop_id:
+                service_shop = ServiceShop.objects.get(id=ServiceShop_id)
+                if service_shop.created_by == user:
+                    serializer = ServiceShopSerializer(service_shop)
+                    return Response(serializer.data, status=status.HTTP_200_OK)
+            else:
+                service_shops = ServiceShop.objects.filter(created_by=user)
+                serializer = ServiceShopSerializer(service_shops, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        except ServiceShop.DoesNotExist:
+            return Response({"error": "Service shop not found"}, status=status.HTTP_404_NOT_FOUND)
+        except:
+            return Response({"error": "Something went wrong"}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
 
     def post(self, request):
         user = request.user
@@ -1886,12 +1970,126 @@ class ServiceShopViewSet(APIView):
         service_shop = ServiceShop.objects.get(id=data['service_shop_id'])
         data['created_by'] = request.user.id
         if service_shop.created_by == request.user:
-            serializer = ServiceShopSerializer(service_shop, data=data)
+            serializer = ServiceShopSerializer(
+                service_shop, data=data, partial=True)
             serializer.is_valid(raise_exception=True)
             serializer.save()
             return Response({"message": "Service shop updated"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "You are not authorized to update this service shop"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ServiceStaffViewSet(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_shop_id = request.query_params.get('service_shop_id')
+        if service_shop_id:
+            service_shop = ServiceShop.objects.get(id=service_shop_id)
+            if service_shop.created_by == user:
+                staffs = service_shop.staffs.all()
+                # serializer = UserSerializer(staffs, many=True)
+                list_name = []
+                for staff in staffs:
+                    list_name.append(staff.username)
+                manager_name = service_shop.manager_service
+                if manager_name:
+                    manager = manager_name.username
+                else:
+                    manager = None
+                return Response({'staffs': list_name, 'manager': manager}, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop'])
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        if service_shop.created_by == user:
+            # chek if staff already exists or number of staffs is more than 10
+            if service_shop.staffs.filter(username=user).exists() or service_shop.staffs.count() > 12:
+                return Response({"error": "Reached Limit for staff adding."}, status=status.HTTP_409_CONFLICT)
+            service_shop.staffs.add(user)
+            service_shop.save()
+            return Response({"message": "Staff added"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to add staff for this service shop"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request):
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop_id'])
+        user = User.objects.get(username=data['username'])
+        if service_shop.created_by == request.user:
+            service_shop.staffs.remove(user)
+            service_shop.save()
+            return Response({"message": "Staff removed"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to remove staff for this service shop"}, status=status.HTTP_403_FORBIDDEN)
+
+
+# set manager for service shop
+class SetManagerServiceShop(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_shop_id = request.query_params.get('service_shop_id')
+        if service_shop_id:
+            service_shop = ServiceShop.objects.get(id=service_shop_id)
+            if service_shop.created_by == user:
+                manager = service_shop.manager_service
+                staffs = service_shop.staffs.all()
+                staffs_json = []
+                for staff in staffs:
+                    staffs_json.append(staff.username)
+                return Response({"manager": manager.username, "staffs": staffs_json}, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop_id'])
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        if service_shop.created_by == request.user:
+            service_shop.manager_service = user
+            # service_shop.save()
+            return Response({"message": "Manager set"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to set manager for this service shop"}, status=status.HTTP_403_FORBIDDEN)
+
+    def put(self, request):
+        data = request.data
+        service_shop = ServiceShop.objects.get(id=data['service_shop_id'])
+        try:
+            user = User.objects.get(username=data['username'])
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        if service_shop.created_by == request.user:
+            service_shop.manager_service = user
+            service_shop.save()
+            return Response({"message": "Manager set"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to set manager for this service shop"}, status=status.HTTP_403_FORBIDDEN)
+
+    def delete(self, request):
+        service_shop = request.query_params.get('service_shop_id')
+        service_shop = ServiceShop.objects.get(id=service_shop)
+        user = request.query_params.get('manager_name')
+        try:
+            user = User.objects.get(username=user).id
+        except User.DoesNotExist:
+            return Response({"error": "User not found"}, status=status.HTTP_409_CONFLICT)
+        is_manager = request.query_params.get('manager')
+        if is_manager == '1':
+            service_shop.manager_service_shop = None
+            service_shop.save()
+            return Response({"message": "Manager removed"}, status=status.HTTP_200_OK)
 
 
 class ServiceTableViewSet(APIView):
@@ -2064,16 +2262,20 @@ class ServiceOrderDetailView(APIView):
 
     def get(self, request):
         user = request.user
-        service_order_id = request.query_params.get('service_order_id')
-        if service_order_id:
-            service_order = ServiceOrder.objects.get(id=service_order_id)
-            if service_order.table.service_shop.created_by == user or user in service_order.table.service_shop.staffs.all():
-                service_order_details = ServiceOrderDetail.objects.filter(
-                    order=service_order_id)
-                serializer = ServiceOrderDetailSerializer(
+        service_shop_id = request.query_params.get('service_shop_id')
+        page = request.query_params.get('page') or 1
+        if service_shop_id:
+            service_shop = ServiceShop.objects.get(id=service_shop_id)
+            if service_shop.created_by == user or user in service_shop.staffs.all():
+                if int(page) < 1:
+                    page = 1
+                start_index = (int(page) - 1) * 10
+                end_index = int(page) * 10
+                service_order_details = ServiceOrder.objects.filter(
+                    table__service_shop=service_shop_id, status=False)[start_index:end_index]
+                serializer = ServiceOrdersSerializer(
                     service_order_details, many=True)
                 return Response(serializer.data, status=status.HTTP_200_OK)
-        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
 
     def post(self, request):
         user = request.user
@@ -2118,6 +2320,36 @@ class ServiceOrderDetailView(APIView):
             return Response({"message": "Service order detail status updated"}, status=status.HTTP_200_OK)
         else:
             return Response({"error": "You are not authorized to update this service order detail"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class ServiceOrderComplete(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        Order_service_id = request.query_params.get('service_id')
+        service_shop_id = request.query_params.get('service_shop_id')
+        shop = ServiceShop.objects.get(id=service_shop_id)
+        if user.is_authenticated and Order_service_id:
+            if user == shop.created_by or user in shop.staffs.all() or shop.manager_service == user:
+                ordersDetails = ServiceOrderDetail.objects.get(
+                    id=Order_service_id)
+                ordersDetails.is_completed = not ordersDetails.is_completed
+                ordersDetails.save()
+                return Response({"message": "Service order completed"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to complete this service order"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        service_order = ServiceOrder.objects.get(id=data['service_order'])
+        if service_order.table.service_shop.created_by == user or user in service_order.table.service_shop.staffs.all():
+            service_order.status = True
+            service_order.save()
+            return Response({"message": "Service order completed"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to complete this service order"}, status=status.HTTP_403_FORBIDDEN)
 
 
 class ShopAnouncementViewSet(APIView):
@@ -2226,17 +2458,140 @@ class TimeInqueCalculate(APIView):
         if table_id:
             table = Table.objects.get(id=table_id)
             if table.restorant.created_by == user or user in table.restorant.staffs.all():
-                table_orders = ServiceOrder.objects.filter(table=table_id, status=False)
+                table_orders = ServiceOrder.objects.filter(
+                    table=table_id, status=False)
                 min_time = 0
                 max_time = 0
                 for order in table_orders:
-                    servecese_in_order = ServiceOrderDetail.objects.filter(order=order.id, is_completed=False)
+                    servecese_in_order = ServiceOrderDetail.objects.filter(
+                        order=order.id, is_completed=False)
                     for service in servecese_in_order:
-                        min_time += service.service.aprox_time_min
-                        max_time += service.service.aprox_time_max
+                        min_time += (service.service.aprox_time_min *
+                                     service.quantity)
+                        max_time += (service.service.aprox_time_max *
+                                     service.quantity)
 
                 return Response({"min_time": min_time, "max_time": max_time}, status=status.HTTP_200_OK)
             else:
                 return Response({"error": "You are not authorized to calculate time for this table"}, status=status.HTTP_403_FORBIDDEN)
         return Response({"error": "Table id is required"}, status=status.HTTP_400_BAD_REQUEST)
-    
+
+# create Booking of servece and service orderdetails
+
+
+class ServiceOrderView(APIView):
+    authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        service_order_id = request.query_params.get('service_order_id')
+        if service_order_id:
+            service_order = ServiceOrder.objects.get(id=service_order_id)
+            if service_order.table.service_shop.created_by == user or user in service_order.table.service_shop.staffs.all():
+                service_order_details = ServiceOrderDetail.objects.filter(
+                    order=service_order_id)
+                serializer = ServiceOrderDetailSerializer(
+                    service_order_details, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+        return Response({"error": "You are not authorized to view this data"}, status=status.HTTP_403_FORBIDDEN)
+
+    def post(self, request):
+        user = request.user
+        data = request.data
+        table = ServiceTable.objects.get(id=data['table'])
+        if table.service_shop.created_by == user:
+            order_number = random.randint(100, 999)
+            if data['order_key']:
+                order_key = data['order_key']
+            else:
+                order_key = random.randint(1000, 9999)
+            order_ip_address = request.META.get('REMOTE_ADDR')
+            serializer = ServiceOrderSerializer(data={
+                'table': table.id,
+                'order_number': order_number,
+                'order_key': order_key,
+                'order_ip_address': order_ip_address,
+                'order_by': user.id
+            })
+            serializer.is_valid(raise_exception=True)
+            serializer.save()
+            # create order details
+            for i in data['service']:
+                service = Service.objects.get(id=i['service'])
+                price = service.price
+                total = i['quantity'] * price
+                ServiceOrderDetail.objects.create(
+                    order=serializer.instance,
+                    service=service,
+                    quantity=i['quantity'],
+                    price=price,
+                    total=total
+                )
+            return Response(serializer.data, status=status.HTTP_201_CREATED)
+        else:
+            return Response({"error": "You are not authorized to add service order"}, status=status.HTTP_403_FORBIDDEN)
+
+    # modify the order
+    def put(self, request, *args, **kwargs):
+        data = request.data
+        service_order = ServiceOrder.objects.get(id=data['service_order_id'])
+        service_shop = service_order.table.service_shop
+        if service_shop.created_by == request.user or request.user in service_shop.staffs.all() or service_shop.manager_service == request.user:
+            # items in data
+            items = data['items']
+            print(items)
+            # if item is already in order then modify quantity else add new item
+            for i in items:
+                service = Service.objects.get(id=i['item'])
+                try:
+                    order_detail = ServiceOrderDetail.objects.get(
+                        service=service, order=service_order)
+                    if (i['quantity'] == 0):
+                        order_detail.delete()
+                    elif (order_detail.quantity != i['quantity']):
+                        order_detail.quantity = i['quantity']
+                        order_detail.is_completed = False
+                        order_detail.save()
+                except:
+                    price = service.price
+                    total = i['quantity'] * price
+                    ServiceOrderDetail.objects.create(
+                        order=service_order,
+                        service=service,
+                        quantity=i['quantity'],
+                        price=price,
+                        total=total
+                    )
+            return Response({"message": "Service order updated"}, status=status.HTTP_200_OK)
+        else:
+            return Response({"error": "You are not authorized to update this service order"}, status=status.HTTP_403_FORBIDDEN)
+
+
+class SearchView(APIView):
+    # authentication_classes = [TokenAuthentication]
+
+    def get(self, request):
+        user = request.user
+        search = request.query_params.get('q')
+        type_of_search = request.query_params.get('type')
+        print(search, type_of_search, type(search), type(type_of_search))
+        if search == '' or type_of_search == '':
+            return Response({"error": "Search and type of search is required"}, status=status.HTTP_400_BAD_REQUEST)
+        if search and type_of_search:
+            # find restorants
+            if type_of_search == '1':
+                restorants = Restorant.objects.filter(
+                    name__icontains=search)
+                serializer = RestorantSearchSerializer(restorants, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            # find hostels
+            elif type_of_search == '2':
+                hostels = Hostel.objects.filter(name__icontains=search)
+                serializer = HostelSearchSerializer(hostels, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)
+            elif type_of_search == '3':
+                service_shops = ServiceShop.objects.filter(
+                    name__icontains=search)
+                serializer = ServiceShopSearchSerializer(
+                    service_shops, many=True)
+                return Response(serializer.data, status=status.HTTP_200_OK)

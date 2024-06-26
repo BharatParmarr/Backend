@@ -122,9 +122,24 @@ class Restorant(models.Model):
     staffs = models.ManyToManyField(
         User, related_name='staffs', blank=True)
     active = models.BooleanField(default=True)
+    open_time = models.TimeField(null=True, blank=True)
+    close_time = models.TimeField(null=True, blank=True)
 
     def __str__(self):
         return self.name
+
+
+class RestorantOpenClose(models.Model):
+    restorant = models.ForeignKey(Restorant, on_delete=models.CASCADE)
+    day = models.CharField(max_length=20)
+    is_open = models.BooleanField(default=True)
+    open_time = models.TimeField()
+    close_time = models.TimeField()
+    status = models.BooleanField(default=True)
+    updated_time = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return self.restorant.name
 
 
 class Table(models.Model):
@@ -457,9 +472,13 @@ class ServiceShop(models.Model):
         User, on_delete=models.CASCADE, related_name='service_created_by')
     staffs = models.ManyToManyField(
         User, related_name='service_staffs', blank=True)
+    manager_service = models.ForeignKey(
+        User, on_delete=models.CASCADE, related_name='manager_service', null=True, blank=True)
     active = models.BooleanField(default=True)
     logo = models.ImageField(
         upload_to=Service_shop_logo_name, null=True, blank=True)
+    open_time = models.TimeField(null=True, blank=True)
+    close_time = models.TimeField(null=True, blank=True)
 
     def __str__(self):
         return self.name

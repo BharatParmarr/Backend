@@ -1,6 +1,6 @@
 from django.urls import path, include
 from rest_framework.routers import DefaultRouter
-from .views import ActivateService, BlockIp, CategoryActive, DataAnalysisForMonth, GoogleLogin, HostelViewSet, InventoryViewSet, ItemActive, LoginView, MealItemView, MealViewSet, ModifyOrder, NoticeViewSet, OrderCompleteView, OrderCreateView, OrderHistory, PaymentViewSet, ProductViewSet, ProductquantityViewSet, Record_payment, RestorantDetails, RestorantViewSet, RoomViewSet, Run, ServiceShopViewSet, ServiceTableViewSet, ServiceViewSet, SetManagerHostel, SetManagerRestorant, ShopAnouncementViewSet, ShopReviewViewSet, SignupView, StudentViewSet, Subscription_buy, Subscription_codeViewSet, TableDetail, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, TimeInqueCalculate, Userdata, VerifyOTPView, DataAnalysis
+from .views import ActivateService, BlockIp, CategoryActive, DataAnalysisForMonth, GoogleLogin, HostelViewSet, InventoryViewSet, ItemActive, LoginView, MealItemView, MealViewSet, ModifyOrder, NoticeViewSet, OrderCompleteView, OrderCreateView, OrderHistory, PaymentViewSet, ProductViewSet, ProductquantityViewSet, Record_payment, RestorantDetails, RestorantViewSet, RoomViewSet, Run, SearchView, ServiceOrderComplete, ServiceOrderDetailView, ServiceOrderView, ServiceShopViewSet, ServiceStaffViewSet, ServiceTableViewSet, ServiceViewSet, SetManagerHostel, SetManagerRestorant, SetManagerServiceShop, ShopAnouncementViewSet, ShopReviewViewSet, SignupView, StudentViewSet, Subscription_buy, Subscription_codeViewSet, TableDetail, TableViewSet, CategoryViewSet, ItemViewSet, OrderViewSet, OrderDetailViewSet, TimeInqueCalculate, Userdata, VerifyOTPView, DataAnalysis
 from django.conf import settings
 from django.conf.urls.static import static
 
@@ -57,6 +57,15 @@ urlpatterns = [
          ActivateService.as_view(), name='service'),
     path('api/service-shop/tables/time',
          TimeInqueCalculate.as_view(), name='service'),
+    path('api/service-shop/Book', ServiceOrderView.as_view(), name='service'),
+    path('api/service-shop/Bookings/completed',
+         ServiceOrderComplete.as_view(), name='service'),
+    path('api/service-shop/Bookings',
+         ServiceOrderDetailView.as_view(), name='service'),
+    path('api/service-shop/Staf',
+         ServiceStaffViewSet.as_view(), name='service'),
+    path('api/service-shop/Manager',
+         SetManagerServiceShop.as_view(), name='service'),
     #     restorent
     path('api/restorant/restorant', RestorantDetails.as_view(), name='restorant'),
     path('api/restorant/restorant/SetManager',
@@ -67,6 +76,8 @@ urlpatterns = [
          CategoryActive.as_view(), name='restorant'),
     path('api/restorant/activate_item/',
          ItemActive.as_view(), name='restorant'),
+    # search api
+    path('api/Search', SearchView.as_view(), name='search'),
     path('api/block_ip', BlockIp.as_view(), name='blockIp'),
     path('auth2/', GoogleLogin.as_view(), name='google-login'),
     path('auth/', include('social_django.urls', namespace='social')),
